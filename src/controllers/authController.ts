@@ -4,35 +4,43 @@ import jwt from "jsonwebtoken";
 
 export const register = async (req: any, res: any) => {
     try {
-        const { email, password } = req.body;
+        const { fullname, username, email, password, gender } = req.body;
 
-        // Validaciones simples
-        if (!email || !password)
-            return res.status(400).json({ error: "Email y password requeridos" });
+        // Validación
+        if (!fullname || !username || !email || !password)
+            return res.status(400).json({ error: "Faltan datos obligatorios" });
 
-        // Verificar si el usuario ya existe
-        const checkUser = await pool.query(
-            "SELECT * FROM hoopstats.users WHERE email = $1",
+        // Verificar si email existe
+        const checkEmail = await pool.query(
+            "SELECT id FROM hoopstats.users WHERE email = $1",
             [email]
         );
+        if (checkEmail.rows.length > 0)
+            return res.status(400).json({ error: "El email ya está registrado" });
 
-        if (checkUser.rows.length > 0)
-            return res.status(400).json({ error: "El usuario ya existe" });
+        // Verificar si username existe
+        const checkUsername = await pool.query(
+            "SELECT id FROM hoopstats.users WHERE username = $1",
+            [username]
+        );
+        if (checkUsername.rows.length > 0)
+            return res.status(400).json({ error: "El nombre de usuario ya existe" });
 
-        // Hashear contraseña
+        // Hash password
         const salt = bcrypt.genSaltSync(10);
         const passwordHash = bcrypt.hashSync(password, salt);
 
         // Insertar usuario
         const result = await pool.query(
-            `INSERT INTO hoopstats.users (email, password_hash)
-       VALUES ($1, $2) RETURNING id, email`,
-            [email, passwordHash]
+            `INSERT INTO hoopstats.users (fullname, username, email, password_hash, gender)
+             VALUES ($1, $2, $3, $4, $5)
+             RETURNING id, fullname, username, email, gender`,
+            [fullname, username, email, passwordHash, gender]
         );
 
         const user = result.rows[0];
 
-        // Crear token
+        // Token
         const token = jwt.sign(
             { userId: user.id },
             process.env.JWT_SECRET as string,
@@ -44,11 +52,21 @@ export const register = async (req: any, res: any) => {
             user,
             token,
         });
-    } catch (err) {
+    } catch (err: any) {
         console.error(err);
+
+        // Error por UNIQUE violation (email o username)
+        if (err.code === "23505") {
+            if (err.detail.includes("email"))
+                return res.status(400).json({ error: "El email ya está registrado" });
+            if (err.detail.includes("username"))
+                return res.status(400).json({ error: "El nombre de usuario ya existe" });
+        }
+
         return res.status(500).json({ error: "Error en el servidor" });
     }
 };
+
 
 export const login = async (req: any, res: any) => {
     try {
@@ -82,9 +100,16 @@ export const login = async (req: any, res: any) => {
 
         return res.json({
             message: "Login exitoso",
-            user: { id: user.id, email: user.email },
-            token,
+            user: {
+                id: user.id,
+                fullname: user.fullname,
+                username: user.username,
+                email: user.email,
+                gender: user.gender
+            },
+            token
         });
+
     } catch (err) {
         console.error(err);
         return res.status(500).json({ error: "Error en el servidor" });

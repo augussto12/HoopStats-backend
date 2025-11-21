@@ -83,3 +83,27 @@ export const updatePassword = async (req: any, res: any) => {
         return res.status(500).json({ error: "Error al cambiar contraseña" });
     }
 };
+
+// =====================================
+// ELIMINAR CUENTA
+// =====================================
+export const deleteAccount = async (req: any, res: any) => {
+    try {
+        const userId = req.user.userId;
+
+        // Eliminamos favoritos
+        await pool.query(`DELETE FROM hoopstats.favorite_players WHERE user_id = $1`, [userId]);
+        await pool.query(`DELETE FROM hoopstats.favorite_teams WHERE user_id = $1`, [userId]);
+
+        // Eliminamos predicciones
+        await pool.query(`DELETE FROM hoopstats.predicciones WHERE user_id = $1`, [userId]);
+
+        // Finalmente eliminamos usuario
+        await pool.query(`DELETE FROM hoopstats.users WHERE id = $1`, [userId]);
+
+        return res.json({ message: "Cuenta eliminada correctamente" });
+    } catch (err) {
+        console.error("❌ Error al eliminar cuenta:", err);
+        return res.status(500).json({ error: "No se pudo eliminar la cuenta" });
+    }
+};

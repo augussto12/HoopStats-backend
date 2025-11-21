@@ -1,7 +1,13 @@
 import { runFantasyCron } from "./fantasyCronController";
 import { runPredictionCron } from "./predictionCronController";
 
+
 export const runAllCrons = async (req: any, res: any) => {
+
+    if (req.headers["x-cron-key"] !== process.env.CRON_SECRET) {
+        return res.status(401).json({ error: "Unauthorized" });
+    }
+
     try {
         const fantasyResult = await runFantasyCron();
         const predictionResult = await runPredictionCron();

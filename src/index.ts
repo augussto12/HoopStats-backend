@@ -9,6 +9,7 @@ import teamRoutes from "./routes/teamRoutes";
 import predictionRoutes from "./routes/predictionRoutes";
 import userRoutes from "./routes/usersRoutes";
 import cronRoutes from "./routes/cronRoutes";
+import favoritesRoutes from "./routes/favoritesRoutes";
 
 dotenv.config();
 
@@ -47,6 +48,7 @@ app.use("/api/teams", teamRoutes);
 app.use("/api/predictions", predictionRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/cron", cronRoutes);
+app.use("/api/favorites", favoritesRoutes);
 
 // ==========================
 // TEST ROUTES

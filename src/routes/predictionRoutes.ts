@@ -1,23 +1,21 @@
 import { Router } from "express";
 import { auth } from "../middlewares/auth";
-
 import {
     createPrediction,
     getMyPredictions,
-    getAllPredictions,
-    updateRealPoints,
-    deletePrediction
+    getPredictionForGame,
+    deletePrediction,
+    getPredictionsRanking
 } from "../controllers/prediccionesController";
+
 
 const router = Router();
 
-// Rutas del usuario
-router.post("/create", auth, createPrediction);
-router.get("/my", auth, getMyPredictions);
+router.post("/", auth, createPrediction);
+router.get("/mine", auth, getMyPredictions);
+router.get("/game/:gameId", auth, getPredictionForGame);
 router.delete("/:id", auth, deletePrediction);
+router.get("/ranking", getPredictionsRanking);
 
-// Admin o CRON
-router.get("/all", getAllPredictions);
-router.patch("/update/:id", updateRealPoints);
 
 export default router;
