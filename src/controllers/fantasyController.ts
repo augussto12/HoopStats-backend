@@ -103,6 +103,7 @@ export const addPlayer = async (req: any, res: any) => {
         }
 
         const player = playerRes.rows[0];
+        player.price = Number(player.price);
 
         const teamRes = await pool.query(
             `SELECT id, budget FROM hoopstats.fantasy_teams WHERE user_id = $1`,
@@ -114,6 +115,7 @@ export const addPlayer = async (req: any, res: any) => {
         }
 
         const team = teamRes.rows[0];
+        team.budget = Number(team.budget);
 
         if (team.budget < player.price) {
             return res.status(400).json({ error: "No tenés presupuesto suficiente" });
