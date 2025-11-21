@@ -69,7 +69,7 @@ export const createTeam = async (req: any, res: any) => {
 
         const team = await pool.query(
             `INSERT INTO hoopstats.fantasy_teams (user_id, name, total_points, budget)
-             VALUES ($1, $2, 0, 100) 
+             VALUES ($1, $2, 0, 1000) 
              RETURNING *`,
             [userId, name || "Mi equipo"]
         );

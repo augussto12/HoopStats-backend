@@ -70,14 +70,14 @@ export const register = async (req: any, res: any) => {
 
 export const login = async (req: any, res: any) => {
     try {
-        const { email, password } = req.body;
+        const { username, password } = req.body;
 
-        if (!email || !password)
-            return res.status(400).json({ error: "Email y password requeridos" });
+        if (!username || !password)
+            return res.status(400).json({ error: "Usuario y password requeridos" });
 
         const result = await pool.query(
-            "SELECT * FROM hoopstats.users WHERE email = $1",
-            [email]
+            "SELECT * FROM hoopstats.users WHERE username = $1",
+            [username]
         );
 
         if (result.rows.length === 0)

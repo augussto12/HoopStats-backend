@@ -146,10 +146,7 @@ export const getPredictionsRanking = async (req: any, res: any) => {
     try {
         const ranking = await pool.query(
             `SELECT 
-                u.id,
-                u.fullname,
                 u.username,
-                u.email,
                 u.total_prediction_points
              FROM hoopstats.users u
              ORDER BY u.total_prediction_points DESC`
