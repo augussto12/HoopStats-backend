@@ -159,3 +159,63 @@ export const getPredictionsRanking = async (req: any, res: any) => {
         return res.status(500).json({ error: "Error al obtener ranking" });
     }
 };
+
+// ======================================================
+// Sumar puntos a los usuarios
+// ======================================================
+export const sumarPuntosDePredicciones = async (req: any, res: any) => {
+    try {
+        console.log("Sumando puntos desde predicciones procesadas...");
+
+        // 1. Obtener suma de puntos por usuario
+        const { rows: usuarios } = await pool.query(
+            `SELECT user_id, SUM(puntos_obtenidos) AS total
+             FROM hoopstats.predicciones
+             WHERE procesada = true AND puntos_obtenidos IS NOT NULL
+             GROUP BY user_id`
+        );
+
+        if (usuarios.length === 0) {
+            return res.json({ message: "No hay predicciones procesadas con puntos." });
+        }
+
+        // 2. Transacción
+        const client = await pool.connect();
+        await client.query("BEGIN");
+
+        try {
+            for (const u of usuarios) {
+                const puntos = Number(u.total);
+
+                console.log(`➡️ User ${u.user_id} suma ${puntos} pts`);
+
+                await client.query(
+                    `UPDATE hoopstats.users
+                     SET total_prediction_points = COALESCE(total_prediction_points, 0) + $1
+                     WHERE id = $2`,
+                    [puntos, u.user_id]
+                );
+            }
+
+            await client.query("COMMIT");
+            console.log("Puntos sumados correctamente");
+
+            return res.json({
+                message: "Puntos sumados correctamente a los usuarios.",
+                afectados: usuarios.length,
+                detalle: usuarios
+            });
+
+        } catch (err) {
+            await client.query("ROLLBACK");
+            console.error("Error durante la transacción:", err);
+            return res.status(500).json({ error: "Error al sumar puntos" });
+        } finally {
+            client.release();
+        }
+
+    } catch (err) {
+        console.error("Error en sumarPuntosDePredicciones:", err);
+        return res.status(500).json({ error: "Error interno" });
+    }
+};
