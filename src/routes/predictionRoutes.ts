@@ -5,7 +5,8 @@ import {
     getMyPredictions,
     getPredictionForGame,
     deletePrediction,
-    getPredictionsRanking
+    getPredictionsRanking,
+    sumarPuntosDePredicciones
 } from "../controllers/prediccionesController";
 
 
@@ -16,6 +17,6 @@ router.get("/mine", auth, getMyPredictions);
 router.get("/game/:gameId", auth, getPredictionForGame);
 router.delete("/:id", auth, deletePrediction);
 router.get("/ranking", getPredictionsRanking);
-
+router.post("/sumar-puntos", auth, sumarPuntosDePredicciones);
 
 export default router;
