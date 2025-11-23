@@ -45,16 +45,22 @@ async function apiGet(path: string, params: any = {}) {
 // CRON PRINCIPAL NUEVO
 // ----------------------------
 
-export const runFantasyCron = async () => {
-    console.log("🔵 Ejecutando cron de fantasy...");
+function parseMinutes(minStr: string) {
+    if (!minStr) return 0;
 
-    // ----------------------------
-    // LOG 1 — ENV VARS
-    // ----------------------------
-    console.log("🌍 ENV:", {
-        API_URL: process.env.NBA_API_BASE_URL,
-        API_KEY: process.env.NBA_API_KEY ? "OK" : "FALTA",
-        SEASON: SEASON,
+    // API usually sends "12:34", "3:21" or null
+    const [m, s] = minStr.split(":").map(Number);
+    const total = m + (s > 0 ? 1 : 0);
+
+    return total;
+}
+
+export const runFantasyCron = async () => {
+    console.log("🟣 Iniciando Fantasy Cron (DEBUG MODE)");
+    console.log("ENV:", {
+        API_URL,
+        API_KEY: API_KEY ? "OK" : "MISSING",
+        SEASON,
     });
 
     try {
@@ -63,81 +69,44 @@ export const runFantasyCron = async () => {
 
         console.log("📅 Fechas ARG:", { todayARG, yesterdayARG });
 
-        // ----------------------------
-        // LOG 2 — FETCH DE PARTIDOS
-        // ----------------------------
-        console.log("📡 Buscando partidos del día y de ayer...");
+        // FETCH GAMES
+        console.log("📡 Fetching games for:", { todayARG, yesterdayARG });
 
-        let gamesToday, gamesYesterday;
+        const gamesToday = await apiGet("/games", { date: todayARG, season: SEASON });
+        const gamesYesterday = await apiGet("/games", { date: yesterdayARG, season: SEASON });
 
-        try {
-            gamesToday = await apiGet("/games", {
-                date: todayARG,
-                season: SEASON,
-            });
-            console.log("📊 gamesToday:", gamesToday.length);
-        } catch (err) {
-            console.error("❌ Error en API gamesToday:", err);
-            throw err;
-        }
+        console.log("📊 GamesToday:", gamesToday.length);
+        console.log("📊 GamesYesterday:", gamesYesterday.length);
 
-        try {
-            gamesYesterday = await apiGet("/games", {
-                date: yesterdayARG,
-                season: SEASON,
-            });
-            console.log("📊 gamesYesterday:", gamesYesterday.length);
-        } catch (err) {
-            console.error("❌ Error en API gamesYesterday:", err);
-            throw err;
-        }
-
-        // ----------------------------
-        // LOG 3 — FILTRADO
-        // ----------------------------
-        const finishedToday = gamesToday.filter(
-            (g: any) => g.status.long === "Finished"
-        );
+        const finishedToday = gamesToday.filter((g: any) => g.status.long === "Finished");
         const finishedYesterday = gamesYesterday
             .filter((g: any) => g.status.long === "Finished")
             .filter((g: any) => isYesterdayValidArgStart(g.date.start));
 
-        console.log("🏁 Finalizados HOY:", finishedToday.length);
-        console.log("🏁 Finalizados AYER válidos:", finishedYesterday.length);
+        console.log("🏁 Finished Today:", finishedToday.length);
+        console.log("🏁 Finished Yesterday:", finishedYesterday.length);
 
         const finishedGames = [...finishedToday, ...finishedYesterday];
 
         if (finishedGames.length === 0) {
-            console.log("⚠️ No hay partidos válidos.");
-            return { updated: false, reason: "No hay partidos válidos" };
+            console.log("⚠️ No finished games found.");
+            return;
         }
 
-        // ----------------------------
-        // LOG 4 — DB: FANTASY PLAYERS
-        // ----------------------------
-        console.log("🗄 Cargando jugadores fantasy...");
+        // LOAD FANTASY PLAYERS
+        console.log("🗄 Fetching fantasy players...");
 
-        let fantasyPlayers;
-        try {
-            const fpRes = await pool.query(`
-                SELECT fp.id, fp.fantasy_team_id, fp.player_id
-                FROM hoopstats.fantasy_players fp
-            `);
-            fantasyPlayers = fpRes.rows;
-            console.log("👥 fantasyPlayers:", fantasyPlayers.length);
-        } catch (err) {
-            console.error("❌ Error consultando fantasy_players:", err);
-            throw err;
-        }
+        const fpRes = await pool.query(`
+            SELECT id, fantasy_team_id, player_id
+            FROM hoopstats.fantasy_players
+        `);
 
-        if (fantasyPlayers.length === 0) {
-            console.log("⚠️ No hay jugadores en fantasy.");
-            return { updated: false, reason: "No hay jugadores en fantasy" };
-        }
+        const fantasyPlayers = fpRes.rows;
 
-        // Mapa player_id → registros fantasy
+        console.log("👥 Fantasy Players (DB):", fantasyPlayers.length);
+        console.log("🟣 Player IDs in DB:", fantasyPlayers.map(fp => fp.player_id));
+
         const fantasyByPlayer = new Map<number, any[]>();
-
         for (const fp of fantasyPlayers) {
             if (!fantasyByPlayer.has(fp.player_id)) {
                 fantasyByPlayer.set(fp.player_id, []);
@@ -145,81 +114,92 @@ export const runFantasyCron = async () => {
             fantasyByPlayer.get(fp.player_id)!.push(fp);
         }
 
-        // ----------------------------
-        // LOG 5 — TEAMS
-        // ----------------------------
-        const teamIds = new Set<number>();
+        // TEAMS TO PROCESS
+        const teamIds = new Set();
         for (const g of finishedGames) {
             teamIds.add(g.teams.home.id);
             teamIds.add(g.teams.visitors.id);
         }
-        console.log("🏀 Teams para procesar:", [...teamIds]);
 
-        // ----------------------------
-        // LOG 6 — FETCH PLAYER STATS
-        // ----------------------------
-        const playerPointsMap = new Map<number, number>();
+        console.log("🏀 Teams to process:", [...teamIds]);
 
+        const playerPointsMap = new Map();
+
+        // MAIN LOOP
         for (const teamId of teamIds) {
-            console.log(`📡 Buscando stats del team ${teamId}...`);
-            let stats;
-            try {
-                stats = await apiGet("/players/statistics", {
-                    season: SEASON,
-                    team: teamId,
-                });
-                console.log(`📊 Stats recibidos: ${stats.length}`);
-            } catch (err) {
-                console.error(`❌ Error obteniendo stats team ${teamId}:`, err);
-                continue; // Saltamos equipo si falla
-            }
+            console.log(`\n-------------------------------------`);
+            console.log(`📡 Fetching stats for Team ${teamId}`);
+            console.log(`-------------------------------------`);
+
+            const stats = await apiGet("/players/statistics", {
+                team: teamId,
+                season: SEASON,
+            });
+
+            console.log(`📊 Stats Received: ${stats.length}`);
 
             for (const s of stats) {
-                const playerId = s.player.id;
+                const apiPlayerId = s.player.id;
+                const minutesStr = s.min;
+                const minutes = parseMinutes(minutesStr);
 
-                if (!fantasyByPlayer.has(playerId)) continue;
-                if (!finishedGames.find((g) => g.id === s.game.id)) continue;
+                console.log(`\n🧍 Player ${apiPlayerId}`);
+                console.log(`  • Name: ${s.player.firstname} ${s.player.lastname}`);
+                console.log(`  • API Minutes: "${minutesStr}" → Parsed: ${minutes}`);
+                console.log(`  • In Fantasy?`, fantasyByPlayer.has(apiPlayerId));
 
-                if (typeof s.min !== "number" || s.min < 2) {
-                    console.log(`⏳ Player ${playerId} jugó menos de 2 min.`);
+                if (!fantasyByPlayer.has(apiPlayerId)) {
+                    console.log("  ❌ Player not in fantasy → SKIP");
+                    continue;
+                }
+
+                if (minutes < 2) {
+                    console.log("  ❌ Played < 2 minutes → SKIP");
+                    continue;
+                }
+
+                // Check if the game matches
+                const match = finishedGames.find((g: any) => g.id === s.game.id);
+                console.log(`  • GameID: ${s.game.id} → Matches finished games?`, !!match);
+
+                if (!match) {
+                    console.log("  ❌ Stats not from a finished match → SKIP");
                     continue;
                 }
 
                 const pts = Number(calcFantasyPoints(s).toFixed(1));
+                console.log(`  • Fantasy Points Calc: ${pts}`);
 
                 if (pts === 0) {
-                    console.log(`⭕ Player ${playerId} puntuación = 0`);
+                    console.log("  ❌ Points = 0 → SKIP");
                     continue;
                 }
 
-                const prev = playerPointsMap.get(playerId) || 0;
-                playerPointsMap.set(playerId, prev + pts);
+                console.log("  ✅ VALID PLAYER → ADDING POINTS");
+
+                const prev = playerPointsMap.get(apiPlayerId) || 0;
+                playerPointsMap.set(apiPlayerId, prev + pts);
             }
         }
 
-        console.log("🔥 playerPointsMap:", [...playerPointsMap.entries()]);
+        console.log("\n🔥 FINAL playerPointsMap:", [...playerPointsMap.entries()]);
 
         if (playerPointsMap.size === 0) {
-            console.log("⚠️ No hubo puntos que sumar.");
-            return { updated: false, reason: "No hubo puntos" };
+            console.log("⚠️ No points to assign. (Probably IDs mismatch or minute filter)");
+            return;
         }
 
-        // ----------------------------
-        // LOG 7 — GUARDADO EN DB
-        // ----------------------------
-        console.log("💾 Actualizando DB...");
+        console.log("\n💾 Saving to database...");
 
         const client = await pool.connect();
+        await client.query("BEGIN");
+
         try {
-            await client.query("BEGIN");
-
-            const teamPointsMap = new Map<number, number>();
-
             for (const [playerId, pts] of playerPointsMap.entries()) {
                 const fps = fantasyByPlayer.get(playerId)!;
 
                 for (const fp of fps) {
-                    console.log(`📝 Sumando ${pts} a fantasyPlayer ${fp.id}`);
+                    console.log(`📝 Updating fantasyPlayer ${fp.id} (+${pts} pts)`);
 
                     await client.query(
                         `UPDATE hoopstats.fantasy_players
@@ -227,45 +207,22 @@ export const runFantasyCron = async () => {
                          WHERE id = $2`,
                         [pts, fp.id]
                     );
-
-                    const current = teamPointsMap.get(fp.fantasy_team_id) || 0;
-                    teamPointsMap.set(fp.fantasy_team_id, current + pts);
                 }
             }
 
-            console.log("🔥 teamPointsMap:", [...teamPointsMap.entries()]);
-
-            for (const [teamId, pts] of teamPointsMap.entries()) {
-                console.log(`📝 Sumando ${pts} a fantasyTeam ${teamId}`);
-
-                await client.query(
-                    `UPDATE hoopstats.fantasy_teams
-                     SET total_points = COALESCE(total_points, 0) + $1
-                     WHERE id = $2`,
-                    [pts, teamId]
-                );
-            }
-
-            console.log("✅ COMMIT");
             await client.query("COMMIT");
+            console.log("🎉 COMMIT OK");
         } catch (err) {
-            console.error("❌ Error guardando puntos:", err);
+            console.error("❌ Error updating DB:", err);
             await client.query("ROLLBACK");
-            console.log("↩️ ROLLBACK ejecutado");
-            return { updated: false, reason: "Error guardando puntos" };
+            console.log("↩️ ROLLBACK DONE");
         } finally {
             client.release();
         }
 
-        console.log("🎉 CRON COMPLETADO");
-
-        return {
-            updated: true,
-            playersUpdated: playerPointsMap.size,
-        };
+        console.log("🎯 CRON FINALIZADO");
     } catch (err) {
-        console.error("🔥 Error en runFantasyCron:", err);
-        return { updated: false, reason: "Error general" };
+        console.error("🔥 CRON ERROR:", err);
     }
 };
 
