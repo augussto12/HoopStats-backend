@@ -11,7 +11,6 @@ const headers = { "x-apisports-key": API_KEY };
 // ----------------------------
 // helpers
 // ----------------------------
-
 function toArgentina(dateUTC: string) {
     return new Date(
         new Date(dateUTC).toLocaleString("en-US", {
@@ -22,7 +21,7 @@ function toArgentina(dateUTC: string) {
 
 function isYesterdayValidArgStart(dateUTC: string): boolean {
     const local = toArgentina(dateUTC);
-    return local.getHours() >= 7; // >= 07:00 AM Argentina
+    return local.getHours() >= 7;
 }
 
 function getArgentinaDate(offsetDays: number = 0) {
@@ -41,166 +40,115 @@ async function apiGet(path: string, params: any = {}) {
     return res.data.response;
 }
 
-// ----------------------------
-// CRON PRINCIPAL NUEVO
-// ----------------------------
-
 function parseMinutes(minStr: string) {
     if (!minStr) return 0;
-
-    // API usually sends "12:34", "3:21" or null
     const [m, s] = minStr.split(":").map(Number);
-    const total = m + (s > 0 ? 1 : 0);
-
-    return total;
+    return m + (s > 0 ? 1 : 0);
 }
 
+// ----------------------------
+// CRON
+// ----------------------------
 export const runFantasyCron = async () => {
-    console.log("🟣 Iniciando Fantasy Cron (DEBUG MODE)");
-    console.log("ENV:", {
-        API_URL,
-        API_KEY: API_KEY ? "OK" : "MISSING",
-        SEASON,
-    });
+    console.log("Iniciando Fantasy Cron...");
 
     try {
         const todayARG = getArgentinaDate(0);
         const yesterdayARG = getArgentinaDate(-1);
 
-        console.log("📅 Fechas ARG:", { todayARG, yesterdayARG });
-
-        // FETCH GAMES
-        console.log("📡 Fetching games for:", { todayARG, yesterdayARG });
-
+        // 1. Fetch games
         const gamesToday = await apiGet("/games", { date: todayARG, season: SEASON });
         const gamesYesterday = await apiGet("/games", { date: yesterdayARG, season: SEASON });
-
-        console.log("📊 GamesToday:", gamesToday.length);
-        console.log("📊 GamesYesterday:", gamesYesterday.length);
 
         const finishedToday = gamesToday.filter((g: any) => g.status.long === "Finished");
         const finishedYesterday = gamesYesterday
             .filter((g: any) => g.status.long === "Finished")
             .filter((g: any) => isYesterdayValidArgStart(g.date.start));
 
-        console.log("🏁 Finished Today:", finishedToday.length);
-        console.log("🏁 Finished Yesterday:", finishedYesterday.length);
-
         const finishedGames = [...finishedToday, ...finishedYesterday];
 
+        console.log(`Partidos finalizados HOY: ${finishedToday.length}`);
+        console.log(`Partidos finalizados AYER válidos: ${finishedYesterday.length}`);
+
         if (finishedGames.length === 0) {
-            console.log("⚠️ No finished games found.");
+            console.log("No hay partidos válidos para procesar.");
             return;
         }
 
-        // LOAD FANTASY PLAYERS
-        console.log("🗄 Fetching fantasy players...");
-
+        // 2. Fetch fantasy players
         const fpRes = await pool.query(`
             SELECT id, fantasy_team_id, player_id
             FROM hoopstats.fantasy_players
         `);
 
         const fantasyPlayers = fpRes.rows;
+        console.log(`Jugadores en fantasy: ${fantasyPlayers.length}`);
 
-        console.log("👥 Fantasy Players (DB):", fantasyPlayers.length);
-        console.log("🟣 Player IDs in DB:", fantasyPlayers.map(fp => fp.player_id));
+        if (fantasyPlayers.length === 0) {
+            console.log("No hay jugadores de fantasy.");
+            return;
+        }
 
         const fantasyByPlayer = new Map<number, any[]>();
         for (const fp of fantasyPlayers) {
-            if (!fantasyByPlayer.has(fp.player_id)) {
-                fantasyByPlayer.set(fp.player_id, []);
-            }
-            fantasyByPlayer.get(fp.player_id)!.push(fp);
+            const list = fantasyByPlayer.get(fp.player_id) ?? [];
+            list.push(fp);
+            fantasyByPlayer.set(fp.player_id, list);
         }
 
-        // TEAMS TO PROCESS
-        const teamIds = new Set();
+        // 3. Stats for teams involved
+        const teamIds = new Set<number>();
         for (const g of finishedGames) {
             teamIds.add(g.teams.home.id);
             teamIds.add(g.teams.visitors.id);
         }
 
-        console.log("🏀 Teams to process:", [...teamIds]);
+        const playerPointsMap = new Map<number, number>();
 
-        const playerPointsMap = new Map();
-
-        // MAIN LOOP
         for (const teamId of teamIds) {
-            console.log(`\n-------------------------------------`);
-            console.log(`📡 Fetching stats for Team ${teamId}`);
-            console.log(`-------------------------------------`);
-
             const stats = await apiGet("/players/statistics", {
                 team: teamId,
                 season: SEASON,
             });
 
-            console.log(`📊 Stats Received: ${stats.length}`);
-
             for (const s of stats) {
                 const apiPlayerId = s.player.id;
-                const minutesStr = s.min;
-                const minutes = parseMinutes(minutesStr);
 
-                console.log(`\n🧍 Player ${apiPlayerId}`);
-                console.log(`  • Name: ${s.player.firstname} ${s.player.lastname}`);
-                console.log(`  • API Minutes: "${minutesStr}" → Parsed: ${minutes}`);
-                console.log(`  • In Fantasy?`, fantasyByPlayer.has(apiPlayerId));
+                if (!fantasyByPlayer.has(apiPlayerId)) continue;
 
-                if (!fantasyByPlayer.has(apiPlayerId)) {
-                    console.log("  ❌ Player not in fantasy → SKIP");
-                    continue;
-                }
+                const minutes = parseMinutes(s.min);
+                if (minutes < 2) continue;
 
-                if (minutes < 2) {
-                    console.log("  ❌ Played < 2 minutes → SKIP");
-                    continue;
-                }
-
-                // Check if the game matches
-                const match = finishedGames.find((g: any) => g.id === s.game.id);
-                console.log(`  • GameID: ${s.game.id} → Matches finished games?`, !!match);
-
-                if (!match) {
-                    console.log("  ❌ Stats not from a finished match → SKIP");
-                    continue;
-                }
+                const match = finishedGames.find((g) => g.id === s.game.id);
+                if (!match) continue;
 
                 const pts = Number(calcFantasyPoints(s).toFixed(1));
-                console.log(`  • Fantasy Points Calc: ${pts}`);
-
-                if (pts === 0) {
-                    console.log("  ❌ Points = 0 → SKIP");
-                    continue;
-                }
-
-                console.log("  ✅ VALID PLAYER → ADDING POINTS");
+                if (pts === 0) continue;
 
                 const prev = playerPointsMap.get(apiPlayerId) || 0;
                 playerPointsMap.set(apiPlayerId, prev + pts);
             }
         }
 
-        console.log("\n🔥 FINAL playerPointsMap:", [...playerPointsMap.entries()]);
+        console.log(`Jugadores que sumaron puntos: ${playerPointsMap.size}`);
 
         if (playerPointsMap.size === 0) {
-            console.log("⚠️ No points to assign. (Probably IDs mismatch or minute filter)");
+            console.log("Ningún jugador sumó puntos.");
             return;
         }
 
-        console.log("\n💾 Saving to database...");
+        // 4. Save results in DB
+        console.log("Guardando en base de datos...");
 
         const client = await pool.connect();
         await client.query("BEGIN");
 
         try {
+            // 4.1 actualizar fantasy_players
             for (const [playerId, pts] of playerPointsMap.entries()) {
                 const fps = fantasyByPlayer.get(playerId)!;
 
                 for (const fp of fps) {
-                    console.log(`📝 Updating fantasyPlayer ${fp.id} (+${pts} pts)`);
-
                     await client.query(
                         `UPDATE hoopstats.fantasy_players
                          SET total_pts = COALESCE(total_pts, 0) + $1
@@ -210,19 +158,41 @@ export const runFantasyCron = async () => {
                 }
             }
 
+            // 4.2 calcular puntos por equipo
+            const teamPointsMap = new Map<number, number>();
+            for (const [playerId, pts] of playerPointsMap.entries()) {
+                const fps = fantasyByPlayer.get(playerId)!;
+                for (const fp of fps) {
+                    const current = teamPointsMap.get(fp.fantasy_team_id) || 0;
+                    teamPointsMap.set(fp.fantasy_team_id, current + pts);
+                }
+            }
+
+            console.log(`Equipos que sumaron puntos: ${teamPointsMap.size}`);
+
+            // 4.3 actualizar fantasy_teams
+            for (const [teamId, pts] of teamPointsMap.entries()) {
+                await client.query(
+                    `UPDATE hoopstats.fantasy_teams
+                     SET total_points = COALESCE(total_points, 0) + $1
+                     WHERE id = $2`,
+                    [pts, teamId]
+                );
+            }
+
             await client.query("COMMIT");
-            console.log("🎉 COMMIT OK");
+            console.log("Commit OK — Fantasy actualizado.");
+
         } catch (err) {
-            console.error("❌ Error updating DB:", err);
+            console.error("Error en DB:", err);
             await client.query("ROLLBACK");
-            console.log("↩️ ROLLBACK DONE");
         } finally {
             client.release();
         }
 
-        console.log("🎯 CRON FINALIZADO");
+        console.log("Cron finalizado correctamente.");
+
     } catch (err) {
-        console.error("🔥 CRON ERROR:", err);
+        console.error("Error general del cron:", err);
     }
 };
-
