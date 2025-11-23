@@ -46,45 +46,92 @@ async function apiGet(path: string, params: any = {}) {
 // ----------------------------
 
 export const runFantasyCron = async () => {
-    try {
-        console.log("🔵 Ejecutando cron de fantasy...");
+    console.log("🔵 Ejecutando cron de fantasy...");
 
+    // ----------------------------
+    // LOG 1 — ENV VARS
+    // ----------------------------
+    console.log("🌍 ENV:", {
+        API_URL: process.env.NBA_API_BASE_URL,
+        API_KEY: process.env.NBA_API_KEY ? "OK" : "FALTA",
+        SEASON: SEASON,
+    });
+
+    try {
         const todayARG = getArgentinaDate(0);
         const yesterdayARG = getArgentinaDate(-1);
 
-        const gamesToday = await apiGet("/games", {
-            date: todayARG,
-            season: SEASON,
-        });
+        console.log("📅 Fechas ARG:", { todayARG, yesterdayARG });
 
-        const gamesYesterday = await apiGet("/games", {
-            date: yesterdayARG,
-            season: SEASON,
-        });
+        // ----------------------------
+        // LOG 2 — FETCH DE PARTIDOS
+        // ----------------------------
+        console.log("📡 Buscando partidos del día y de ayer...");
 
+        let gamesToday, gamesYesterday;
+
+        try {
+            gamesToday = await apiGet("/games", {
+                date: todayARG,
+                season: SEASON,
+            });
+            console.log("📊 gamesToday:", gamesToday.length);
+        } catch (err) {
+            console.error("❌ Error en API gamesToday:", err);
+            throw err;
+        }
+
+        try {
+            gamesYesterday = await apiGet("/games", {
+                date: yesterdayARG,
+                season: SEASON,
+            });
+            console.log("📊 gamesYesterday:", gamesYesterday.length);
+        } catch (err) {
+            console.error("❌ Error en API gamesYesterday:", err);
+            throw err;
+        }
+
+        // ----------------------------
+        // LOG 3 — FILTRADO
+        // ----------------------------
         const finishedToday = gamesToday.filter(
             (g: any) => g.status.long === "Finished"
         );
-
         const finishedYesterday = gamesYesterday
             .filter((g: any) => g.status.long === "Finished")
             .filter((g: any) => isYesterdayValidArgStart(g.date.start));
 
+        console.log("🏁 Finalizados HOY:", finishedToday.length);
+        console.log("🏁 Finalizados AYER válidos:", finishedYesterday.length);
+
         const finishedGames = [...finishedToday, ...finishedYesterday];
 
         if (finishedGames.length === 0) {
+            console.log("⚠️ No hay partidos válidos.");
             return { updated: false, reason: "No hay partidos válidos" };
         }
 
-        // 3. Obtener fantasy players
-        const fpRes = await pool.query(`
-          SELECT fp.id, fp.fantasy_team_id, fp.player_id
-          FROM hoopstats.fantasy_players fp
-        `);
+        // ----------------------------
+        // LOG 4 — DB: FANTASY PLAYERS
+        // ----------------------------
+        console.log("🗄 Cargando jugadores fantasy...");
 
-        const fantasyPlayers = fpRes.rows;
+        let fantasyPlayers;
+        try {
+            const fpRes = await pool.query(`
+                SELECT fp.id, fp.fantasy_team_id, fp.player_id
+                FROM hoopstats.fantasy_players fp
+            `);
+            fantasyPlayers = fpRes.rows;
+            console.log("👥 fantasyPlayers:", fantasyPlayers.length);
+        } catch (err) {
+            console.error("❌ Error consultando fantasy_players:", err);
+            throw err;
+        }
 
         if (fantasyPlayers.length === 0) {
+            console.log("⚠️ No hay jugadores en fantasy.");
             return { updated: false, reason: "No hay jugadores en fantasy" };
         }
 
@@ -98,22 +145,34 @@ export const runFantasyCron = async () => {
             fantasyByPlayer.get(fp.player_id)!.push(fp);
         }
 
-        // 4. TEAM IDs involucrados
+        // ----------------------------
+        // LOG 5 — TEAMS
+        // ----------------------------
         const teamIds = new Set<number>();
-
         for (const g of finishedGames) {
             teamIds.add(g.teams.home.id);
             teamIds.add(g.teams.visitors.id);
         }
+        console.log("🏀 Teams para procesar:", [...teamIds]);
 
-        // 5. Procesar stats
+        // ----------------------------
+        // LOG 6 — FETCH PLAYER STATS
+        // ----------------------------
         const playerPointsMap = new Map<number, number>();
 
         for (const teamId of teamIds) {
-            const stats = await apiGet("/players/statistics", {
-                season: SEASON,
-                team: teamId,
-            });
+            console.log(`📡 Buscando stats del team ${teamId}...`);
+            let stats;
+            try {
+                stats = await apiGet("/players/statistics", {
+                    season: SEASON,
+                    team: teamId,
+                });
+                console.log(`📊 Stats recibidos: ${stats.length}`);
+            } catch (err) {
+                console.error(`❌ Error obteniendo stats team ${teamId}:`, err);
+                continue; // Saltamos equipo si falla
+            }
 
             for (const s of stats) {
                 const playerId = s.player.id;
@@ -121,21 +180,35 @@ export const runFantasyCron = async () => {
                 if (!fantasyByPlayer.has(playerId)) continue;
                 if (!finishedGames.find((g) => g.id === s.game.id)) continue;
 
-                if (typeof s.min !== "number" || s.min < 2) continue;
+                if (typeof s.min !== "number" || s.min < 2) {
+                    console.log(`⏳ Player ${playerId} jugó menos de 2 min.`);
+                    continue;
+                }
 
                 const pts = Number(calcFantasyPoints(s).toFixed(1));
-                if (pts === 0) continue;
+
+                if (pts === 0) {
+                    console.log(`⭕ Player ${playerId} puntuación = 0`);
+                    continue;
+                }
 
                 const prev = playerPointsMap.get(playerId) || 0;
                 playerPointsMap.set(playerId, prev + pts);
             }
         }
 
+        console.log("🔥 playerPointsMap:", [...playerPointsMap.entries()]);
+
         if (playerPointsMap.size === 0) {
+            console.log("⚠️ No hubo puntos que sumar.");
             return { updated: false, reason: "No hubo puntos" };
         }
 
-        // 6. Guardar en DB
+        // ----------------------------
+        // LOG 7 — GUARDADO EN DB
+        // ----------------------------
+        console.log("💾 Actualizando DB...");
+
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
@@ -146,6 +219,8 @@ export const runFantasyCron = async () => {
                 const fps = fantasyByPlayer.get(playerId)!;
 
                 for (const fp of fps) {
+                    console.log(`📝 Sumando ${pts} a fantasyPlayer ${fp.id}`);
+
                     await client.query(
                         `UPDATE hoopstats.fantasy_players
                          SET total_pts = COALESCE(total_pts, 0) + $1
@@ -158,7 +233,11 @@ export const runFantasyCron = async () => {
                 }
             }
 
+            console.log("🔥 teamPointsMap:", [...teamPointsMap.entries()]);
+
             for (const [teamId, pts] of teamPointsMap.entries()) {
+                console.log(`📝 Sumando ${pts} a fantasyTeam ${teamId}`);
+
                 await client.query(
                     `UPDATE hoopstats.fantasy_teams
                      SET total_points = COALESCE(total_points, 0) + $1
@@ -167,14 +246,18 @@ export const runFantasyCron = async () => {
                 );
             }
 
+            console.log("✅ COMMIT");
             await client.query("COMMIT");
         } catch (err) {
-            await client.query("ROLLBACK");
             console.error("❌ Error guardando puntos:", err);
+            await client.query("ROLLBACK");
+            console.log("↩️ ROLLBACK ejecutado");
             return { updated: false, reason: "Error guardando puntos" };
         } finally {
             client.release();
         }
+
+        console.log("🎉 CRON COMPLETADO");
 
         return {
             updated: true,
@@ -185,3 +268,4 @@ export const runFantasyCron = async () => {
         return { updated: false, reason: "Error general" };
     }
 };
+
