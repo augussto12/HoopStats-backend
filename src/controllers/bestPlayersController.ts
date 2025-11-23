@@ -22,7 +22,15 @@ export const getBestPlayersLatest = async (req: any, res: any) => {
             SELECT category, player_name AS player, value
             FROM hoopstats.best_players_by_day
             WHERE day_id = $1
-            ORDER BY category
+            ORDER BY CASE
+                WHEN category = 'Puntos' THEN 1
+                WHEN category = 'Rebotes' THEN 2
+                WHEN category = 'Asistencias' THEN 3
+                WHEN category = 'Tapones' THEN 4
+                WHEN category = 'Robos' THEN 5
+                WHEN category = 'Triples' THEN 6
+                ELSE 7
+            END
         `, [dayId]);
 
         return res.json(playersRes.rows);
@@ -32,7 +40,6 @@ export const getBestPlayersLatest = async (req: any, res: any) => {
         return res.status(500).json({ error: "Error obteniendo best players." });
     }
 };
-
 
 // ==========================
 // GET /best-players/:date
@@ -57,7 +64,15 @@ export const getBestPlayersByDate = async (req: any, res: any) => {
             SELECT category, player_name AS player, value
             FROM hoopstats.best_players_by_day
             WHERE day_id = $1
-            ORDER BY category
+            ORDER BY CASE
+                WHEN category = 'Puntos' THEN 1
+                WHEN category = 'Rebotes' THEN 2
+                WHEN category = 'Asistencias' THEN 3
+                WHEN category = 'Tapones' THEN 4
+                WHEN category = 'Robos' THEN 5
+                WHEN category = 'Triples' THEN 6
+                ELSE 7
+            END
         `, [dayId]);
 
         return res.json(playersRes.rows);
@@ -67,3 +82,4 @@ export const getBestPlayersByDate = async (req: any, res: any) => {
         return res.status(500).json({ error: "Error obteniendo best players por fecha." });
     }
 };
+
