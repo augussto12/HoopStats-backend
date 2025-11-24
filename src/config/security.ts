@@ -5,7 +5,7 @@ import sanitizeHtml from "sanitize-html";
 
 export const configureSecurity = (app: any) => {
 
-    // Seguridad HTTP
+    // Helmet
     app.use(helmet());
 
     // Sanitización XSS
@@ -28,37 +28,27 @@ export const configureSecurity = (app: any) => {
         next();
     });
 
-    // Rate limit GLOBAL (Railway-safe)
+    // Rate limit GLOBAL
     app.use(rateLimit({
         windowMs: 15 * 60 * 1000,
         max: 200,
         standardHeaders: true,
-        legacyHeaders: false,
-        message: { error: "Demasiadas solicitudes, intente más tarde." }
+        legacyHeaders: false
     }));
 
-    // Rate limit auth
+    // Rate limit AUTH
     app.use("/api/auth", rateLimit({
         windowMs: 10 * 60 * 1000,
         max: 10,
         standardHeaders: true,
-        legacyHeaders: false,
-        message: { error: "Demasiados intentos, esperá un rato." }
+        legacyHeaders: false
     }));
 
-    // Slowdown anti fuerza bruta (Railway-safe)
+    // Slowdown LOGIN
     app.use("/api/auth/login", slowDown({
         windowMs: 10 * 60 * 1000,
         delayAfter: 5,
         delayMs: () => 1000,
-        validate: { delayMs: false } // <- FIX REQUERIDO
+        validate: { delayMs: false }
     }));
-
-    // Manejo de JSON inválido
-    app.use((err: any, req: any, res: any, next: any) => {
-        if (err instanceof SyntaxError && "body" in err) {
-            return res.status(400).json({ error: "JSON inválido" });
-        }
-        next();
-    });
 };
