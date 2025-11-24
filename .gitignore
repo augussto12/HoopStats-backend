@@ -1,0 +1,52 @@
+# ───── Node general ─────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json
+
+# ───── Build / dist ─────
+dist/
+build/
+out/
+
+# ───── Environment variables ─────
+.env
+
+
+# Evita subir configuraciones sensibles
+*.local
+
+# ───── Logs ─────
+logs/
+*.log
+*.log.*
+log.txt
+
+# ───── OS-specific ─────
+.DS_Store
+Thumbs.db
+
+# ───── IDE files ─────
+.vscode/
+.idea/
+*.swp
+
+# ───── Temporary files ─────
+tmp/
+temp/
+*.tmp
+
+# ───── TypeScript ─────
+*.tsbuildinfo
+
+# ───── Debug / coverage ─────
+coverage/
+.nyc_output/
+
+# ───── Docker (si usás más adelante) ─────
+docker-data/
+
+# ───── Railway (por las dudas) ─────
+railway/
