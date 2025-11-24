@@ -52,7 +52,7 @@ export const configureSecurity = (app: any) => {
     app.use("/api/auth/login", slowDown({
         windowMs: 10 * 60 * 1000,
         delayAfter: 5,
-        delayMs: 1000
+        delayMs: () => 1000 
     }));
 
     // Manejo de JSON inválido

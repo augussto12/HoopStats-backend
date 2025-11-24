@@ -17,6 +17,9 @@ import { configureSecurity } from "./config/security";
 dotenv.config();
 
 const app = express();
+
+app.set("trust proxy", true);
+
 configureSecurity(app);
 const PORT = process.env.PORT || 3000;
 
