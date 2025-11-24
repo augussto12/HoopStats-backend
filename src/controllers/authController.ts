@@ -82,58 +82,54 @@ export const register = async (req: any, res: any) => {
 
 export const login = async (req: any, res: any) => {
     try {
-        // VALIDAR CON ZOD
-        const data = loginSchema.parse(req.body);
-        const pepper = process.env.PASSWORD_PEPPER || "";
-        const identifier = data.identifier.trim().toLowerCase();
-        const password = data.password;
+        const { identifier, password } = req.body;
 
-        // Detectamos si es email o username
-        const isEmail = identifier.includes("@");
+        if (!identifier || !password)
+            return res.status(400).json({ error: "Usuario/email y contraseña requeridos" });
 
-        let result;
-        if (isEmail) {
-            result = await pool.query(
-                "SELECT * FROM hoopstats.users WHERE email = $1",
-                [identifier]
-            );
-        } else {
-            result = await pool.query(
-                "SELECT * FROM hoopstats.users WHERE username = $1",
-                [identifier]
-            );
-        }
+        const normalized = identifier.trim().toLowerCase();
 
-        if (result.rows.length === 0) {
+        // ¿email o username?
+        const isEmail = normalized.includes("@");
+        const query = isEmail
+            ? "SELECT * FROM hoopstats.users WHERE email = $1"
+            : "SELECT * FROM hoopstats.users WHERE username = $1";
+
+        const result = await pool.query(query, [normalized]);
+
+        if (result.rows.length === 0)
             return res.status(400).json({ error: "Credenciales inválidas" });
-        }
 
         const user = result.rows[0];
 
-        /*let validPass = false;
+        let validPass = false;
 
-        // Intento 1: validar usando PEPPER nuevo
-        if (bcrypt.compareSync(password + pepper, user.password_hash)) {
+        // === 1) Chequeo normal (usuarios nuevos) ===
+        if (bcrypt.compareSync(password, user.password_hash)) {
             validPass = true;
-        } else {
-            // Intento 2: validar SIN PEPPER (usuarios viejos)
-            if (bcrypt.compareSync(password, user.password_hash)) {
-                validPass = true;
-
-                // Migración automática: re-hash con pepper
-                const salt = bcrypt.genSaltSync(10);
-                const newHash = bcrypt.hashSync(password + pepper, salt);
-
-                await pool.query(
-                    "UPDATE hoopstats.users SET password_hash = $1 WHERE id = $2",
-                    [newHash, user.id]
-                );
-            }
         }
-            */
 
-        const validPass = bcrypt.compareSync(password, user.password_hash);
-        if (!validPass) return res.status(400).json({ error: "Credenciales inválidas" });
+        // === 2) Chequeo sin trim (usuarios viejos que usaron espacios) ===
+        if (!validPass && bcrypt.compareSync(password.trim(), user.password_hash)) {
+            validPass = true;
+        }
+
+        // === 3) Chequeo sin lowercase (si la sanitización cambió algo) ===
+        if (!validPass && bcrypt.compareSync(password.toString(), user.password_hash)) {
+            validPass = true;
+        }
+
+        if (!validPass)
+            return res.status(400).json({ error: "Credenciales inválidas" });
+
+        // MIGRACIÓN AUTOMÁTICA A LA NUEVA VERSIÓN DEL HASH
+        const newSalt = bcrypt.genSaltSync(10);
+        const newHash = bcrypt.hashSync(password.trim(), newSalt);
+
+        await pool.query(
+            "UPDATE hoopstats.users SET password_hash = $1 WHERE id = $2",
+            [newHash, user.id]
+        );
 
         // Crear token
         const token = jwt.sign(
@@ -155,12 +151,9 @@ export const login = async (req: any, res: any) => {
         });
 
     } catch (err: any) {
-        if (err.name === "ZodError") {
-            return res.status(400).json({ error: "Datos inválidos" });
-        }
-
         console.error(err);
         return res.status(500).json({ error: "Error en el servidor" });
     }
 };
+
 
