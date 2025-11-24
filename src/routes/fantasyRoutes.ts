@@ -11,21 +11,15 @@ import {
 
 const router = Router();
 
-// ====================
 //   MI EQUIPO
-// ====================
 router.get("/my-team", auth, getMyTeam);
 router.post("/create", auth, createTeam);
 
-// ====================
 //   JUGADORES
-// ====================
 router.post("/add-player/:playerId", auth, addPlayer);
 router.delete("/remove-player/:playerId", auth, removePlayer);
 
-// ====================
 //   RANKING GLOBAL
-// ====================
 router.get("/ranking", getRanking);
 
 export default router;

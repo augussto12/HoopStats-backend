@@ -1,8 +1,6 @@
 import { pool } from "../db";
 
-// ======================================================
 // Crear predicción
-// ======================================================
 export const createPrediction = async (req: any, res: any) => {
     try {
         const userId = req.user.userId;
@@ -62,14 +60,12 @@ export const createPrediction = async (req: any, res: any) => {
         });
 
     } catch (err) {
-        console.error("❌ Error creando predicción:", err);
+        console.error("Error creando predicción:", err);
         return res.status(500).json({ error: "Error al crear predicción" });
     }
 };
 
-// ======================================================
 // Obtener mis predicciones
-// ======================================================
 export const getMyPredictions = async (req: any, res: any) => {
     try {
         const userId = req.user.userId;
@@ -85,14 +81,12 @@ export const getMyPredictions = async (req: any, res: any) => {
         return res.json(result.rows);
 
     } catch (err) {
-        console.error("❌ Error al obtener mis predicciones:", err);
+        console.error("Error al obtener mis predicciones:", err);
         return res.status(500).json({ error: "Error al obtener predicciones" });
     }
 };
 
-// ======================================================
 // Obtener predicción para un partido específico
-// ======================================================
 export const getPredictionForGame = async (req: any, res: any) => {
     try {
         const userId = req.user.userId;
@@ -108,14 +102,12 @@ export const getPredictionForGame = async (req: any, res: any) => {
         return res.json(result.rows[0] || null);
 
     } catch (err) {
-        console.error("❌ Error al obtener predicción:", err);
+        console.error("Error al obtener predicción:", err);
         return res.status(500).json({ error: "Error al obtener predicción" });
     }
 };
 
-// ======================================================
 // Eliminar predicción
-// ======================================================
 export const deletePrediction = async (req: any, res: any) => {
     try {
         const userId = req.user.userId;
@@ -137,7 +129,7 @@ export const deletePrediction = async (req: any, res: any) => {
         return res.json({ message: "Predicción eliminada" });
 
     } catch (err) {
-        console.error("❌ Error al borrar predicción:", err);
+        console.error("Error al borrar predicción:", err);
         return res.status(500).json({ error: "Error al borrar predicción" });
     }
 };
@@ -155,14 +147,12 @@ export const getPredictionsRanking = async (req: any, res: any) => {
         return res.json(ranking.rows);
 
     } catch (err) {
-        console.error("❌ Error al obtener ranking de predicciones:", err);
+        console.error("Error al obtener ranking de predicciones:", err);
         return res.status(500).json({ error: "Error al obtener ranking" });
     }
 };
 
-// ======================================================
 // Sumar puntos a los usuarios
-// ======================================================
 export const sumarPuntosDePredicciones = async (req: any, res: any) => {
     try {
         console.log("Sumando puntos desde predicciones procesadas...");

@@ -2,11 +2,16 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import slowDown from "express-slow-down";
 import sanitizeHtml from "sanitize-html";
+import cors from "cors";
 
 export const configureSecurity = (app: any) => {
 
     // Helmet
-    app.use(helmet());
+    app.use(helmet({
+        crossOriginResourcePolicy: false,
+    }));
+
+    app.disable("x-powered-by");
 
     // Sanitización XSS
     app.use((req: any, res: any, next: any) => {
@@ -28,6 +33,12 @@ export const configureSecurity = (app: any) => {
         next();
     });
 
+    app.use(cors({
+        origin: ["https://hoopstats.com.ar"],
+        credentials: true,
+        methods: ["GET", "POST", "PUT", "DELETE"]
+    }));
+
     // Rate limit GLOBAL
     app.use(rateLimit({
         windowMs: 15 * 60 * 1000,
@@ -39,7 +50,7 @@ export const configureSecurity = (app: any) => {
     // Rate limit AUTH
     app.use("/api/auth", rateLimit({
         windowMs: 10 * 60 * 1000,
-        max: 10,
+        max: 30,
         standardHeaders: true,
         legacyHeaders: false
     }));

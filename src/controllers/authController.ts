@@ -1,46 +1,65 @@
 import { pool } from "../db";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { registerSchema, loginSchema } from "../validators/auth";
+import crypto from "crypto";
 
+import {
+    registerSchema,
+    loginSchema,
+    emailSchema,
+    resetPasswordSchema
+} from "../validators/auth";
+
+import Mailgun from "mailgun.js";
+import formData from "form-data";
+
+
+// MAILGUN CONFIG
+const mg = new Mailgun(formData).client({
+    username: "api",
+    key: process.env.MAILGUN_API_KEY!,
+});
+
+const sendEmail = async (to: string, subject: string, html: string) => {
+    return mg.messages.create(process.env.MAILGUN_DOMAIN!, {
+        from: process.env.MAILGUN_FROM!,
+        to,
+        subject,
+        html,
+    });
+};
+
+
+// REGISTER (con verificación de email)
 export const register = async (req: any, res: any) => {
     try {
-        // VALIDAR CON ZOD
         const data = registerSchema.parse(req.body);
         const pepper = process.env.PASSWORD_PEPPER || "";
+
         const fullname = data.fullname.trim();
         const username = data.username.trim().toLowerCase();
-        const email = data.email.toLowerCase().trim();
+        const email = data.email.trim().toLowerCase();
         const password = data.password;
         const gender = data.gender;
 
-        // Verificar email existente
         const checkEmail = await pool.query(
-            "SELECT id FROM hoopstats.users WHERE email = $1",
-            [email]
+            "SELECT id FROM hoopstats.users WHERE email = $1", [email]
         );
         if (checkEmail.rows.length > 0)
             return res.status(400).json({ error: "El email ya está registrado" });
 
-        // Verificar username existente
         const checkUsername = await pool.query(
-            "SELECT id FROM hoopstats.users WHERE username = $1",
-            [username]
+            "SELECT id FROM hoopstats.users WHERE username = $1", [username]
         );
         if (checkUsername.rows.length > 0)
             return res.status(400).json({ error: "El nombre de usuario ya existe" });
 
-        // Hash de contraseña
-        //const salt = bcrypt.genSaltSync(10);
-        //const passwordHash = bcrypt.hashSync(password + pepper, salt);
-
         const salt = bcrypt.genSaltSync(10);
-        const passwordHash = bcrypt.hashSync(password, salt);
+        const passwordHash = bcrypt.hashSync(password + pepper, salt);
 
-
-        // Insertar usuario normalizado
         const result = await pool.query(
-            `INSERT INTO hoopstats.users (fullname, username, email, password_hash, gender)
+            `INSERT INTO hoopstats.users 
+             (fullname, username, email, password_hash, gender)
              VALUES ($1, $2, $3, $4, $5)
              RETURNING id, fullname, username, email, gender`,
             [fullname, username, email, passwordHash, gender]
@@ -48,49 +67,162 @@ export const register = async (req: any, res: any) => {
 
         const user = result.rows[0];
 
-        // Token
-        const token = jwt.sign(
+        const rawToken = crypto.randomBytes(32).toString("hex");
+        const tokenHash = bcrypt.hashSync(rawToken, 10);
+
+        await pool.query(
+            `UPDATE hoopstats.users 
+             SET email_verification_token = $1,
+                 email_verification_expires = NOW() + INTERVAL '24 hours'
+             WHERE id = $2`,
+            [tokenHash, user.id]
+        );
+
+        const link = `https://hoopstats.com.ar/verify-email?token=${rawToken}&email=${email}`;
+        //const link = `http://localhost:4200/verify-email?token=${rawToken}&email=${email}`;
+
+        await sendEmail(
+            email,
+            "Verifica tu cuenta - HoopStats",
+            `
+                <h2>Bienvenido a HoopStats</h2>
+                <p>Para activar tu cuenta, verificá tu email haciendo click acá:</p>
+                <a href="${link}" target="_blank">${link}</a>
+                <p>Este enlace expira en 24 horas.</p>
+            `
+        );
+
+        const sessionToken = jwt.sign(
             { userId: user.id },
-            process.env.JWT_SECRET as string,
+            process.env.JWT_SECRET!,
             { expiresIn: "1d" }
         );
 
         return res.json({
-            message: "Usuario registrado correctamente",
+            message: "Cuenta creada. Revisa tu email para verificarla.",
             user,
-            token
+            token: sessionToken,
         });
 
     } catch (err: any) {
-        console.error(err);
+        if (err.name === "ZodError")
+            return res.status(400).json({ error: err.errors[0].message });
 
-        if (err.code === "23505") {
-            if (err.detail.includes("email"))
-                return res.status(400).json({ error: "El email ya está registrado" });
-            if (err.detail.includes("username"))
-                return res.status(400).json({ error: "El nombre de usuario ya existe" });
-        }
-
-        if (err.name === "ZodError") {
-            return res.status(400).json({ error: "Datos inválidos", details: err.errors });
-        }
-
+        console.error("Register error:", err);
         return res.status(500).json({ error: "Error en el servidor" });
     }
 };
 
 
+// VERIFY EMAIL
+export const verifyEmail = async (req: any, res: any) => {
+    try {
+        const { token, email } = req.query;
+
+        if (!token || !email)
+            return res.status(400).json({ error: "Faltan datos" });
+
+        const result = await pool.query(
+            `SELECT id, email_verification_token, email_verification_expires 
+             FROM hoopstats.users WHERE email = $1`,
+            [email]
+        );
+
+        if (result.rows.length === 0)
+            return res.status(400).json({ error: "Token inválido" });
+
+        const user = result.rows[0];
+
+        if (user.email_verification_expires < new Date())
+            return res.status(400).json({ error: "Token vencido" });
+
+        const match = bcrypt.compareSync(token as string, user.email_verification_token);
+        if (!match)
+            return res.status(400).json({ error: "Token inválido" });
+
+        await pool.query(
+            `UPDATE hoopstats.users
+             SET email_verified = true,
+                 email_verification_token = NULL,
+                 email_verification_expires = NULL
+             WHERE id = $1`,
+            [user.id]
+        );
+
+        return res.json({ ok: true, message: "Email verificado correctamente" });
+
+    } catch (err) {
+        console.error("verifyEmail error:", err);
+        return res.status(500).json({ error: "Error en el servidor" });
+    }
+};
+
+// RESEND VERIFICATION EMAIL
+export const resendVerification = async (req: any, res: any) => {
+    try {
+        const { email } = emailSchema.parse(req.body);
+        const normalized = email.trim().toLowerCase();
+
+        const result = await pool.query(
+            `SELECT id, email_verified 
+             FROM hoopstats.users WHERE email = $1`,
+            [normalized]
+        );
+
+        if (result.rows.length === 0)
+            return res.json({ ok: true });
+
+        const user = result.rows[0];
+
+        if (user.email_verified)
+            return res.json({ ok: true });
+
+        const rawToken = crypto.randomBytes(32).toString("hex");
+        const tokenHash = bcrypt.hashSync(rawToken, 10);
+
+        await pool.query(
+            `UPDATE hoopstats.users 
+             SET email_verification_token = $1,
+                 email_verification_expires = NOW() + INTERVAL '24 hours'
+             WHERE id = $2`,
+            [tokenHash, user.id]
+        );
+
+        const link = `https://hoopstats.com.ar/verify-email?token=${rawToken}&email=${normalized}`;
+        //const link = `http://localhost:4200/verify-email?token=${rawToken}&email=${normalized}`;
+
+        await sendEmail(
+            normalized,
+            "Reenviar verificación de cuenta - HoopStats",
+            `
+                <h2>Verificar email</h2>
+                <p>Click acá para verificar:</p>
+                <a href="${link}" target="_blank">${link}</a>
+            `
+        );
+
+        return res.json({ ok: true });
+
+    } catch (err: any) {
+        if (err.name === "ZodError")
+            return res.status(400).json({ error: err.errors[0].message });
+
+        console.error("resendVerification error:", err);
+        return res.status(500).json({ error: "Error en el servidor" });
+    }
+};
+
+
+
+// LOGIN
 export const login = async (req: any, res: any) => {
     try {
-        const { identifier, password } = req.body;
-
-        if (!identifier || !password)
-            return res.status(400).json({ error: "Usuario/email y contraseña requeridos" });
+        const { identifier, password } = loginSchema.parse(req.body);
+        const pepper = process.env.PASSWORD_PEPPER || "";
 
         const normalized = identifier.trim().toLowerCase();
-
-        // ¿email o username?
         const isEmail = normalized.includes("@");
+
         const query = isEmail
             ? "SELECT * FROM hoopstats.users WHERE email = $1"
             : "SELECT * FROM hoopstats.users WHERE username = $1";
@@ -102,39 +234,25 @@ export const login = async (req: any, res: any) => {
 
         const user = result.rows[0];
 
-        let validPass = false;
+        // Contraseña con pepper
+        let validPass = bcrypt.compareSync(password + pepper, user.password_hash);
 
-        // === 1) Chequeo normal (usuarios nuevos) ===
-        if (bcrypt.compareSync(password, user.password_hash)) {
+        // Migración automática hash viejo
+        if (!validPass && bcrypt.compareSync(password, user.password_hash)) {
             validPass = true;
-        }
-
-        // === 2) Chequeo sin trim (usuarios viejos que usaron espacios) ===
-        if (!validPass && bcrypt.compareSync(password.trim(), user.password_hash)) {
-            validPass = true;
-        }
-
-        // === 3) Chequeo sin lowercase (si la sanitización cambió algo) ===
-        if (!validPass && bcrypt.compareSync(password.toString(), user.password_hash)) {
-            validPass = true;
+            const newHash = bcrypt.hashSync(password + pepper, 10);
+            await pool.query(
+                "UPDATE hoopstats.users SET password_hash = $1 WHERE id = $2",
+                [newHash, user.id]
+            );
         }
 
         if (!validPass)
             return res.status(400).json({ error: "Credenciales inválidas" });
 
-        // MIGRACIÓN AUTOMÁTICA A LA NUEVA VERSIÓN DEL HASH
-        const newSalt = bcrypt.genSaltSync(10);
-        const newHash = bcrypt.hashSync(password.trim(), newSalt);
-
-        await pool.query(
-            "UPDATE hoopstats.users SET password_hash = $1 WHERE id = $2",
-            [newHash, user.id]
-        );
-
-        // Crear token
         const token = jwt.sign(
             { userId: user.id },
-            process.env.JWT_SECRET as string,
+            process.env.JWT_SECRET!,
             { expiresIn: "1d" }
         );
 
@@ -145,15 +263,116 @@ export const login = async (req: any, res: any) => {
                 fullname: user.fullname,
                 username: user.username,
                 email: user.email,
-                gender: user.gender
+                gender: user.gender,
+                email_verified: user.email_verified
             },
-            token
+            token,
         });
 
     } catch (err: any) {
-        console.error(err);
+        if (err.name === "ZodError")
+            return res.status(400).json({ error: err.errors[0].message });
+
+        console.error("Login error:", err);
         return res.status(500).json({ error: "Error en el servidor" });
     }
 };
 
+
+// FORGOT PASSWORD
+export const forgotPassword = async (req: any, res: any) => {
+    try {
+        const { email } = emailSchema.parse(req.body);
+        const normalized = email.trim().toLowerCase();
+
+        const result = await pool.query(
+            "SELECT id FROM hoopstats.users WHERE email = $1",
+            [normalized]
+        );
+
+        if (result.rows.length === 0)
+            return res.json({ ok: true });
+
+        const user = result.rows[0];
+
+        const rawToken = crypto.randomBytes(32).toString("hex");
+        const tokenHash = bcrypt.hashSync(rawToken, 10);
+
+        await pool.query(
+            `UPDATE hoopstats.users 
+             SET reset_token = $1,
+                 reset_expires = NOW() + INTERVAL '15 minutes'
+             WHERE id = $2`,
+            [tokenHash, user.id]
+        );
+
+        const link = `https://hoopstats.com.ar/reset-password?token=${rawToken}`;
+        //const link = `http://localhost:4200/reset-password?token=${rawToken}`;
+
+        await sendEmail(
+            normalized,
+            "Restablecer contraseña - HoopStats",
+            `
+                <h2>Restablecer contraseña</h2>
+                <a href="${link}" target="_blank">${link}</a>
+            `
+        );
+
+        return res.json({ ok: true });
+
+    } catch (err: any) {
+        if (err.name === "ZodError")
+            return res.status(400).json({ error: err.errors[0].message });
+
+        console.error("forgotPassword error:", err);
+        return res.status(500).json({ error: "Error en el servidor" });
+    }
+};
+
+
+// RESET PASSWORD
+export const resetPassword = async (req: any, res: any) => {
+    try {
+        const { token, password } = resetPasswordSchema.parse(req.body);
+        const pepper = process.env.PASSWORD_PEPPER || "";
+
+        const result = await pool.query(
+            `SELECT id, reset_token 
+             FROM hoopstats.users
+             WHERE reset_expires > NOW()`
+        );
+
+        let userFound = null;
+
+        for (const u of result.rows) {
+            if (bcrypt.compareSync(token, u.reset_token)) {
+                userFound = u;
+                break;
+            }
+        }
+
+        if (!userFound)
+            return res.status(400).json({ error: "Token inválido o vencido" });
+
+        const newHash = bcrypt.hashSync(password + pepper, 10);
+
+        await pool.query(
+            `UPDATE hoopstats.users
+             SET password_hash = $1,
+                 reset_token = NULL,
+                 reset_expires = NULL
+             WHERE id = $2`,
+            [newHash, userFound.id]
+        );
+
+        return res.json({ ok: true, message: "Contraseña actualizada" });
+
+    } catch (err: any) {
+        if (err.name === "ZodError")
+            return res.status(400).json({ error: err.errors[0].message });
+
+        console.error("resetPassword error:", err);
+        return res.status(500).json({ error: "Error en el servidor" });
+    }
+};
 

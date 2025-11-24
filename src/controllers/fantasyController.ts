@@ -1,8 +1,6 @@
 import { pool } from "../db";
 
-// ==========================================================
 // Obtener mi equipo de fantasy
-// ==========================================================
 export const getMyTeam = async (req: any, res: any) => {
     try {
         const userId = req.user.userId;
@@ -45,14 +43,12 @@ export const getMyTeam = async (req: any, res: any) => {
         });
 
     } catch (err) {
-        console.error("❌ Error al obtener equipo:", err);
+        console.error("Error al obtener equipo:", err);
         return res.status(500).json({ error: "Error al obtener equipo" });
     }
 };
 
-// ==========================================================
 // Crear equipo
-// ==========================================================
 export const createTeam = async (req: any, res: any) => {
     try {
         const userId = req.user.userId;
@@ -80,14 +76,12 @@ export const createTeam = async (req: any, res: any) => {
         });
 
     } catch (err) {
-        console.error("❌ Error al crear equipo:", err);
+        console.error("Error al crear equipo:", err);
         return res.status(500).json({ error: "Error al crear equipo" });
     }
 };
 
-// ==========================================================
 // Agregar jugador
-// ==========================================================
 export const addPlayer = async (req: any, res: any) => {
     try {
         const userId = req.user.userId;
@@ -155,14 +149,12 @@ export const addPlayer = async (req: any, res: any) => {
         });
 
     } catch (err) {
-        console.error("❌ Error al agregar jugador:", err);
+        console.error("Error al agregar jugador:", err);
         return res.status(500).json({ error: "Error al agregar jugador" });
     }
 };
 
-// ==========================================================
 // Eliminar jugador
-// ==========================================================
 export const removePlayer = async (req: any, res: any) => {
     try {
         const userId = req.user.userId;
@@ -211,14 +203,12 @@ export const removePlayer = async (req: any, res: any) => {
         return res.json({ message: "Jugador eliminado" });
 
     } catch (err) {
-        console.error("❌ Error al eliminar jugador:", err);
+        console.error("Error al eliminar jugador:", err);
         return res.status(500).json({ error: "Error al eliminar jugador" });
     }
 };
 
-// ==========================================================
 // Ranking Global
-// ==========================================================
 export const getRanking = async (req: any, res: any) => {
     try {
         const ranking = await pool.query(
@@ -236,7 +226,7 @@ export const getRanking = async (req: any, res: any) => {
         return res.json(ranking.rows);
 
     } catch (err) {
-        console.error("❌ Error al obtener ranking:", err);
+        console.error("Error al obtener ranking:", err);
         return res.status(500).json({ error: "Error al obtener ranking" });
     }
 };

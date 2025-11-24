@@ -25,7 +25,7 @@ export const getFavorites = async (req: any, res: any) => {
             teams: teams.rows
         });
     } catch (err) {
-        console.error("❌ Error al obtener favoritos:", err);
+        console.error("Error al obtener favoritos:", err);
         return res.status(500).json({ error: "Error al obtener favoritos" });
     }
 };
@@ -61,7 +61,7 @@ export const addFavorite = async (req: any, res: any) => {
 
         return res.json({ message: "Favorito agregado" });
     } catch (err) {
-        console.error("❌ Error al agregar favorito:", err);
+        console.error("Error al agregar favorito:", err);
         return res.status(500).json({ error: "Error al agregar favorito" });
     }
 };
@@ -95,7 +95,7 @@ export const removeFavorite = async (req: any, res: any) => {
 
         return res.json({ message: "Favorito eliminado" });
     } catch (err) {
-        console.error("❌ Error al eliminar favorito:", err);
+        console.error("Error al eliminar favorito:", err);
         return res.status(500).json({ error: "Error al eliminar favorito" });
     }
 };

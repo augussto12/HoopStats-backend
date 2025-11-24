@@ -1,8 +1,6 @@
 import { pool } from "../db";
 
-// ==========================
 // GET /best-players/latest
-// ==========================
 export const getBestPlayersLatest = async (req: any, res: any) => {
     try {
         const dayRes = await pool.query(`
@@ -41,9 +39,7 @@ export const getBestPlayersLatest = async (req: any, res: any) => {
     }
 };
 
-// ==========================
 // GET /best-players/:date
-// ==========================
 export const getBestPlayersByDate = async (req: any, res: any) => {
     try {
         const { date } = req.params;
