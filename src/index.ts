@@ -18,32 +18,28 @@ dotenv.config();
 
 const app = express();
 
-app.set("trust proxy", true);
+// Railway usa proxy → dejar esto arriba de todo
+app.set("trust proxy", 1);
 
-configureSecurity(app);
-const PORT = process.env.PORT || 3000;
-
-// ==========================
-// CORS CONFIG
-// ==========================
-
-const allowedOrigins: (string | RegExp)[] = [
-    "http://localhost:4200",
-    "https://hoopstats.com.ar",
-    "https://www.hoopstats.com.ar",
-    "https://hoopstats.netlify.app",
-];
-
-if (process.env.FRONTEND_URL) {
-    allowedOrigins.push(process.env.FRONTEND_URL);
-}
-
+// CORS primero
 app.use(cors({
-    origin: allowedOrigins,
+    origin: [
+        "http://localhost:4200",
+        "https://hoopstats.com.ar",
+        "https://www.hoopstats.com.ar",
+        "https://hoopstats.netlify.app",
+    ],
     credentials: true,
 }));
 
-app.use(express.json());
+// Body parser antes de sanitize + security
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true, limit: "1mb" }));
+
+// Ahora sí: seguridad (helmet, sanitize, rate-limits, slowdown)
+configureSecurity(app);
+
+const PORT = process.env.PORT || 3000;
 
 // ==========================
 // RUTAS
@@ -59,25 +55,17 @@ app.use("/api/cron", cronRoutes);
 app.use("/api/favorites", favoritesRoutes);
 app.use("/api/best-players", bestPlayersRoutes);
 
-// ==========================
-// TEST ROUTES
-// ==========================
-
+// TEST
 app.get("/api/test", (req, res) => {
     res.json({ ok: true });
 });
 
+// PROTECTED
 app.get("/api/protected", auth, (req, res) => {
-    res.json({
-        ok: true,
-        user: req.user,
-    });
+    res.json({ ok: true, user: req.user });
 });
 
-// ==========================
 // SERVER START
-// ==========================
-
 app.listen(PORT, () => {
     console.log(`🚀 Backend escuchando en puerto ${PORT}`);
 });
