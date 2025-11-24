@@ -13,7 +13,6 @@ import favoritesRoutes from "./routes/favoritesRoutes";
 import bestPlayersRoutes from "./routes/bestPlayersRoutes";
 import { configureSecurity } from "./config/security";
 
-
 dotenv.config();
 
 const app = express();
