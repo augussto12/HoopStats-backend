@@ -6,7 +6,8 @@ import {
   createTeam,
   addPlayer,
   removePlayer,
-  getRanking
+  getRanking,
+  updateTeamName
 } from "../controllers/fantasyController";
 
 const router = Router();
@@ -14,6 +15,7 @@ const router = Router();
 //   MI EQUIPO
 router.get("/my-team", auth, getMyTeam);
 router.post("/create", auth, createTeam);
+router.put("/update-name", auth, updateTeamName);
 
 //   JUGADORES
 router.post("/add-player/:playerId", auth, addPlayer);

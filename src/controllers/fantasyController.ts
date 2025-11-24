@@ -230,3 +230,44 @@ export const getRanking = async (req: any, res: any) => {
         return res.status(500).json({ error: "Error al obtener ranking" });
     }
 };
+
+
+// Actualizar nombre del equipo
+export const updateTeamName = async (req: any, res: any) => {
+    try {
+        const userId = req.user.userId;
+        const { name } = req.body;
+
+        if (!name || name.trim().length < 3) {
+            return res.status(400).json({ error: "El nombre debe tener al menos 3 caracteres" });
+        }
+
+        const teamRes = await pool.query(
+            `SELECT id FROM hoopstats.fantasy_teams WHERE user_id = $1`,
+            [userId]
+        );
+
+        if (teamRes.rows.length === 0) {
+            return res.status(400).json({ error: "No tenés equipo creado" });
+        }
+
+        const teamId = teamRes.rows[0].id;
+
+        const update = await pool.query(
+            `UPDATE hoopstats.fantasy_teams
+             SET name = $1
+             WHERE id = $2
+             RETURNING id, name, total_points, budget`,
+            [name.trim(), teamId]
+        );
+
+        return res.json({
+            message: "Nombre actualizado",
+            team: update.rows[0]
+        });
+
+    } catch (err) {
+        console.error("Error al actualizar nombre:", err);
+        return res.status(500).json({ error: "Error al actualizar nombre" });
+    }
+};
