@@ -11,11 +11,13 @@ import userRoutes from "./routes/usersRoutes";
 import cronRoutes from "./routes/cronRoutes";
 import favoritesRoutes from "./routes/favoritesRoutes";
 import bestPlayersRoutes from "./routes/bestPlayersRoutes";
+import { configureSecurity } from "./config/security";
 
 
 dotenv.config();
 
 const app = express();
+configureSecurity(app);
 const PORT = process.env.PORT || 3000;
 
 // ==========================
@@ -24,18 +26,19 @@ const PORT = process.env.PORT || 3000;
 
 const allowedOrigins: (string | RegExp)[] = [
     "http://localhost:4200",
+    "https://hoopstats.com.ar",
+    "https://www.hoopstats.com.ar",
+    "https://hoopstats.netlify.app",
 ];
 
 if (process.env.FRONTEND_URL) {
     allowedOrigins.push(process.env.FRONTEND_URL);
 }
 
-app.use(
-    cors({
-        origin: allowedOrigins,
-        credentials: true,
-    })
-);
+app.use(cors({
+    origin: allowedOrigins,
+    credentials: true,
+}));
 
 app.use(express.json());
 

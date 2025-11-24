@@ -1,16 +1,20 @@
 import { pool } from "../db";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { registerSchema, loginSchema } from "../validators/auth";
 
 export const register = async (req: any, res: any) => {
     try {
-        const { fullname, username, email, password, gender } = req.body;
+        // VALIDAR CON ZOD
+        const data = registerSchema.parse(req.body);
+        const pepper = process.env.PASSWORD_PEPPER || "";
+        const fullname = data.fullname.trim();
+        const username = data.username.trim().toLowerCase();
+        const email = data.email.toLowerCase().trim();
+        const password = data.password;
+        const gender = data.gender;
 
-        // Validación
-        if (!fullname || !username || !email || !password)
-            return res.status(400).json({ error: "Faltan datos obligatorios" });
-
-        // Verificar si email existe
+        // Verificar email existente
         const checkEmail = await pool.query(
             "SELECT id FROM hoopstats.users WHERE email = $1",
             [email]
@@ -18,7 +22,7 @@ export const register = async (req: any, res: any) => {
         if (checkEmail.rows.length > 0)
             return res.status(400).json({ error: "El email ya está registrado" });
 
-        // Verificar si username existe
+        // Verificar username existente
         const checkUsername = await pool.query(
             "SELECT id FROM hoopstats.users WHERE username = $1",
             [username]
@@ -26,11 +30,11 @@ export const register = async (req: any, res: any) => {
         if (checkUsername.rows.length > 0)
             return res.status(400).json({ error: "El nombre de usuario ya existe" });
 
-        // Hash password
+        // Hash de contraseña
         const salt = bcrypt.genSaltSync(10);
-        const passwordHash = bcrypt.hashSync(password, salt);
+        const passwordHash = bcrypt.hashSync(password + pepper, salt);
 
-        // Insertar usuario
+        // Insertar usuario normalizado
         const result = await pool.query(
             `INSERT INTO hoopstats.users (fullname, username, email, password_hash, gender)
              VALUES ($1, $2, $3, $4, $5)
@@ -44,23 +48,27 @@ export const register = async (req: any, res: any) => {
         const token = jwt.sign(
             { userId: user.id },
             process.env.JWT_SECRET as string,
-            { expiresIn: "7d" }
+            { expiresIn: "1d" }
         );
 
         return res.json({
             message: "Usuario registrado correctamente",
             user,
-            token,
+            token
         });
+
     } catch (err: any) {
         console.error(err);
 
-        // Error por UNIQUE violation (email o username)
         if (err.code === "23505") {
             if (err.detail.includes("email"))
                 return res.status(400).json({ error: "El email ya está registrado" });
             if (err.detail.includes("username"))
                 return res.status(400).json({ error: "El nombre de usuario ya existe" });
+        }
+
+        if (err.name === "ZodError") {
+            return res.status(400).json({ error: "Datos inválidos", details: err.errors });
         }
 
         return res.status(500).json({ error: "Error en el servidor" });
@@ -70,32 +78,64 @@ export const register = async (req: any, res: any) => {
 
 export const login = async (req: any, res: any) => {
     try {
-        const { username, password } = req.body;
+        // VALIDAR CON ZOD
+        const data = loginSchema.parse(req.body);
+        const pepper = process.env.PASSWORD_PEPPER || "";
+        const identifier = data.identifier.trim().toLowerCase();
+        const password = data.password;
 
-        if (!username || !password)
-            return res.status(400).json({ error: "Usuario y password requeridos" });
+        // Detectamos si es email o username
+        const isEmail = identifier.includes("@");
 
-        const result = await pool.query(
-            "SELECT * FROM hoopstats.users WHERE username = $1",
-            [username]
-        );
+        let result;
+        if (isEmail) {
+            result = await pool.query(
+                "SELECT * FROM hoopstats.users WHERE email = $1",
+                [identifier]
+            );
+        } else {
+            result = await pool.query(
+                "SELECT * FROM hoopstats.users WHERE username = $1",
+                [identifier]
+            );
+        }
 
-        if (result.rows.length === 0)
+        if (result.rows.length === 0) {
             return res.status(400).json({ error: "Credenciales inválidas" });
+        }
 
         const user = result.rows[0];
 
-        // Validar contraseña
-        const validPass = bcrypt.compareSync(password, user.password_hash);
+        let validPass = false;
 
-        if (!validPass)
+        // Intento 1: validar usando PEPPER nuevo
+        if (bcrypt.compareSync(password + pepper, user.password_hash)) {
+            validPass = true;
+        } else {
+            // Intento 2: validar SIN PEPPER (usuarios viejos)
+            if (bcrypt.compareSync(password, user.password_hash)) {
+                validPass = true;
+
+                // Migración automática: re-hash con pepper
+                const salt = bcrypt.genSaltSync(10);
+                const newHash = bcrypt.hashSync(password + pepper, salt);
+
+                await pool.query(
+                    "UPDATE hoopstats.users SET password_hash = $1 WHERE id = $2",
+                    [newHash, user.id]
+                );
+            }
+        }
+
+        if (!validPass) {
             return res.status(400).json({ error: "Credenciales inválidas" });
+        }
 
         // Crear token
         const token = jwt.sign(
             { userId: user.id },
             process.env.JWT_SECRET as string,
-            { expiresIn: "7d" }
+            { expiresIn: "1d" }
         );
 
         return res.json({
@@ -110,8 +150,13 @@ export const login = async (req: any, res: any) => {
             token
         });
 
-    } catch (err) {
+    } catch (err: any) {
+        if (err.name === "ZodError") {
+            return res.status(400).json({ error: "Datos inválidos" });
+        }
+
         console.error(err);
         return res.status(500).json({ error: "Error en el servidor" });
     }
 };
+

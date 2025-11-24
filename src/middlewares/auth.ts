@@ -7,7 +7,7 @@ interface TokenPayload {
     exp: number;
 }
 
-// Extender Request para poder usar req.user
+// Extender Request para req.user
 declare module "express-serve-static-core" {
     interface Request {
         user?: TokenPayload;
@@ -22,17 +22,16 @@ export const auth = (req: Request, res: Response, next: NextFunction) => {
             return res.status(401).json({ error: "Token no proporcionado" });
         }
 
-        // Permite ambos formatos:
-        // Authorization: Bearer xxx
-        // Authorization: xxx
+        // Soporta: "Bearer xxx" o "xxx"
         const token = header.startsWith("Bearer ")
-            ? header.split(" ")[1]
+            ? header.slice(7)
             : header;
 
         if (!token) {
             return res.status(401).json({ error: "Token no proporcionado" });
         }
 
+        // Verificar token
         const decoded = jwt.verify(
             token,
             process.env.JWT_SECRET as string
@@ -41,8 +40,20 @@ export const auth = (req: Request, res: Response, next: NextFunction) => {
         req.user = decoded;
 
         next();
-    } catch (err) {
+
+    } catch (err: any) {
+
+        // Token expirado
+        if (err.name === "TokenExpiredError") {
+            return res.status(401).json({ error: "Token expirado" });
+        }
+
+        // Token manipulado
+        if (err.name === "JsonWebTokenError") {
+            return res.status(401).json({ error: "Token inválido" });
+        }
+
         console.error("Auth error:", err);
-        return res.status(401).json({ error: "Token inválido o expirado" });
+        return res.status(401).json({ error: "Error de autenticación" });
     }
 };
