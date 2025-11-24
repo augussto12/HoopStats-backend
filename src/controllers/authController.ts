@@ -31,8 +31,12 @@ export const register = async (req: any, res: any) => {
             return res.status(400).json({ error: "El nombre de usuario ya existe" });
 
         // Hash de contraseña
+        //const salt = bcrypt.genSaltSync(10);
+        //const passwordHash = bcrypt.hashSync(password + pepper, salt);
+
         const salt = bcrypt.genSaltSync(10);
-        const passwordHash = bcrypt.hashSync(password + pepper, salt);
+        const passwordHash = bcrypt.hashSync(password, salt);
+
 
         // Insertar usuario normalizado
         const result = await pool.query(
@@ -106,7 +110,7 @@ export const login = async (req: any, res: any) => {
 
         const user = result.rows[0];
 
-        let validPass = false;
+        /*let validPass = false;
 
         // Intento 1: validar usando PEPPER nuevo
         if (bcrypt.compareSync(password + pepper, user.password_hash)) {
@@ -126,10 +130,10 @@ export const login = async (req: any, res: any) => {
                 );
             }
         }
+            */
 
-        if (!validPass) {
-            return res.status(400).json({ error: "Credenciales inválidas" });
-        }
+        const validPass = bcrypt.compareSync(password, user.password_hash);
+        if (!validPass) return res.status(400).json({ error: "Credenciales inválidas" });
 
         // Crear token
         const token = jwt.sign(
