@@ -1,6 +1,7 @@
 import { pool } from "../db";
 
 // Crear predicción
+// Crear predicción
 export const createPrediction = async (req: any, res: any) => {
     try {
         const userId = req.user.userId;
@@ -10,7 +11,8 @@ export const createPrediction = async (req: any, res: any) => {
             home_team,
             visitor_team,
             puntos_local_prediccion,
-            puntos_visitante_prediccion
+            puntos_visitante_prediccion,
+            game_date
         } = req.body;
 
         // Validación completa
@@ -19,7 +21,8 @@ export const createPrediction = async (req: any, res: any) => {
             !home_team ||
             !visitor_team ||
             puntos_local_prediccion == null ||
-            puntos_visitante_prediccion == null
+            puntos_visitante_prediccion == null ||
+            !game_date
         ) {
             return res.status(400).json({ error: "Faltan datos" });
         }
@@ -40,13 +43,14 @@ export const createPrediction = async (req: any, res: any) => {
         // Insert real
         const insert = await pool.query(
             `INSERT INTO hoopstats.predicciones
-                (user_id, game_id, home_team, visitor_team,
+                (user_id, game_id, game_date, home_team, visitor_team,
                  puntos_local_prediccion, puntos_visitante_prediccion, procesada)
-             VALUES ($1, $2, $3, $4, $5, $6, false)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, false)
              RETURNING *`,
             [
                 userId,
                 game_id,
+                game_date,
                 home_team,
                 visitor_team,
                 puntos_local_prediccion,
@@ -65,13 +69,28 @@ export const createPrediction = async (req: any, res: any) => {
     }
 };
 
+
+// Obtener mis predicciones
 // Obtener mis predicciones
 export const getMyPredictions = async (req: any, res: any) => {
     try {
         const userId = req.user.userId;
 
         const result = await pool.query(
-            `SELECT *
+            `SELECT 
+                id,
+                user_id,
+                game_id,
+                home_team,
+                visitor_team,
+                puntos_local_prediccion,
+                puntos_visitante_prediccion,
+                puntos_local_real,
+                puntos_visitante_real,
+                puntos_obtenidos,
+                procesada,
+                created_at,
+                TO_CHAR(game_date, 'YYYY-MM-DD') AS game_date
              FROM hoopstats.predicciones
              WHERE user_id = $1
              ORDER BY created_at DESC`,
@@ -85,6 +104,7 @@ export const getMyPredictions = async (req: any, res: any) => {
         return res.status(500).json({ error: "Error al obtener predicciones" });
     }
 };
+
 
 // Obtener predicción para un partido específico
 export const getPredictionForGame = async (req: any, res: any) => {

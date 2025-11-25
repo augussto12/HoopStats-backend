@@ -5,7 +5,6 @@ export const runPredictionCron = async () => {
     console.log("Ejecutando cron de predicciones...");
 
     try {
-        // 1. Predicciones NO procesadas
         const { rows: pendientes } = await pool.query(
             `SELECT * FROM hoopstats.predicciones WHERE procesada = false`
         );
@@ -14,11 +13,9 @@ export const runPredictionCron = async () => {
 
         if (pendientes.length === 0) return;
 
-        // Cache
         const gameCache = new Map<number, any>();
         const scoreCache = new Map<string, number>();
 
-        // Abrimos una transacción
         const client = await pool.connect();
         await client.query("BEGIN");
 
@@ -29,7 +26,6 @@ export const runPredictionCron = async () => {
                 try {
                     const gameId = pred.game_id;
 
-                    // 2. Obtener partido (cache → API)
                     let game;
                     if (gameCache.has(gameId)) {
                         game = gameCache.get(gameId);
@@ -48,13 +44,11 @@ export const runPredictionCron = async () => {
                         gameCache.set(gameId, game);
                     }
 
-                    // Solo procesar si terminó
                     if (game.status.long !== "Finished") continue;
 
                     const realHome = game.scores.home.points;
                     const realAway = game.scores.visitors.points;
 
-                    // 3. Calcular puntos (cacheado)
                     const cacheKey = `${pred.puntos_local_prediccion}|${pred.puntos_visitante_prediccion}|${realHome}|${realAway}`;
                     let puntos;
 
@@ -70,15 +64,17 @@ export const runPredictionCron = async () => {
                         scoreCache.set(cacheKey, puntos);
                     }
 
-                    // 4. Actualizar predicción
+                    // 🔥 ACTUALIZAR también puntos reales
                     await client.query(
                         `UPDATE hoopstats.predicciones
-                         SET puntos_obtenidos = $1, procesada = true
-                         WHERE id = $2`,
-                        [puntos, pred.id]
+                         SET puntos_obtenidos = $1,
+                             puntos_local_real = $2,
+                             puntos_visitante_real = $3,
+                             procesada = true
+                         WHERE id = $4`,
+                        [puntos, realHome, realAway, pred.id]
                     );
 
-                    // 5. Sumar puntos al usuario
                     await client.query(
                         `UPDATE hoopstats.users
                          SET total_prediction_points = COALESCE(total_prediction_points, 0) + $1
@@ -109,9 +105,6 @@ export const runPredictionCron = async () => {
     }
 };
 
-// -------------------------
-// LÓGICA DE PUNTOS
-// -------------------------
 function calcularPuntos(predHome: number, predAway: number, realHome: number, realAway: number) {
     let pts = 0;
 
