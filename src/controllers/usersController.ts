@@ -2,6 +2,26 @@ import { pool } from "../db";
 import bcrypt from "bcryptjs";
 import { updatePasswordSchema, updateProfileSchema } from "../validators/auth";
 
+
+
+// Obtener todos los usuarios
+export const getAllUsers = async (req: any, res: any) => {
+    try {
+        const result = await pool.query(
+            `SELECT id, fullname, username, email
+             FROM hoopstats.users
+             ORDER BY username ASC`
+        );
+
+        return res.json(result.rows);
+
+    } catch (err) {
+        console.error("Error al obtener usuarios:", err);
+        return res.status(500).json({ error: "Error al obtener usuarios" });
+    }
+};
+
+
 // Obtener datos del usuario autenticado
 export const getMyProfile = async (req: any, res: any) => {
     try {

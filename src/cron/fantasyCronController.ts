@@ -174,6 +174,29 @@ export const runFantasyCron = async () => {
                 );
             }
 
+            // 5.3 BIS → SUMAR PUNTOS A LAS LIGAS DEL EQUIPO
+            for (const [teamId, pts] of teamPointsMap.entries()) {
+                // obtener ligas del equipo
+                const leaguesRes = await client.query(
+                    `SELECT league_id 
+                    FROM hoopstats.fantasy_league_teams
+                    WHERE fantasy_team_id = $1`,
+                    [teamId]
+                );
+
+                // sumar puntos en cada liga
+                for (const row of leaguesRes.rows) {
+                    await client.query(
+                        `UPDATE hoopstats.fantasy_league_teams
+                        SET points = COALESCE(points, 0) + $1
+                        WHERE fantasy_team_id = $2
+                        AND league_id = $3`,
+                        [pts, teamId, row.league_id]
+                    );
+                }
+            }
+
+
             // 5.4 Registrar games procesados
             for (const g of gamesToProcess) {
                 await client.query(

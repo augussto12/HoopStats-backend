@@ -1,6 +1,7 @@
 import { runFantasyCron } from "./fantasyCronController";
 import { runPredictionCron } from "./predictionCronController";
 import { runBestPlayersCron } from "./bestPlayersCronController";
+import { runMarketLockCron } from "./marketLockCronController";
 
 
 export const runAllCrons = async (req: any, res: any) => {
@@ -13,13 +14,16 @@ export const runAllCrons = async (req: any, res: any) => {
         const fantasyResult = await runFantasyCron();
         const predictionResult = await runPredictionCron();
         const bestPlayersResult = await runBestPlayersCron();
+        const marketLockResult = await runMarketLockCron();
 
         return res.json({
             message: "Todos los crons ejecutados correctamente",
             fantasy: fantasyResult,
             predictions: predictionResult,
             bestPlayers: bestPlayersResult,
+            marketLock: marketLockResult,
         });
+
     } catch (err) {
         console.error(err);
         return res.status(500).json({ error: "Error ejecutando crons" });
