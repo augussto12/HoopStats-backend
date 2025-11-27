@@ -1,8 +1,13 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import authRoutes from "./routes/authRoutes";
+import cron from "node-cron";
+
 import { auth } from "./middlewares/auth";
+import { configureSecurity } from "./config/security";
+
+import authRoutes from "./routes/authRoutes";
+
 import fantasyRoutes from "./routes/fantasyRoutes";
 import playerRoutes from "./routes/playerRoutes";
 import teamRoutes from "./routes/teamRoutes";
@@ -11,9 +16,35 @@ import userRoutes from "./routes/usersRoutes";
 import cronRoutes from "./routes/cronRoutes";
 import favoritesRoutes from "./routes/favoritesRoutes";
 import bestPlayersRoutes from "./routes/bestPlayersRoutes";
-import { configureSecurity } from "./config/security";
+
 
 dotenv.config();
+
+
+
+// ──────────────────────────────────────────
+//                CRON LOCAL
+// ──────────────────────────────────────────
+cron.schedule("0 10 * * *", async () => {
+    console.log("⏱ Ejecutando cron LOCAL del backend (07:00 AR)...");
+
+    try {
+        const res = await fetch(
+            "https://hoopstats-backend-production.up.railway.app/api/cron/run-all",
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "x-cron-key": process.env.CRON_SECRET || "",
+                },
+            }
+        );
+
+        console.log("📡 Cron respondió:", res.status);
+    } catch (err) {
+        console.error("❌ Error en cron:", err);
+    }
+});
 
 const app = express();
 
