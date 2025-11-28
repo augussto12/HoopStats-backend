@@ -11,7 +11,8 @@ import {
     getLeagueTeams,
     getLeagueRanking,
     getMyCreatedLeagues,
-    getMyAdminStatus
+    getMyAdminStatus,
+    getAllLeagues
 } from "../controllers/fantasyLeaguesController";
 
 const router = Router();
@@ -39,6 +40,7 @@ router.delete("/:leagueId/members/:userId", auth, deleteMember);
 // ─────────────────────────────
 //        LEAGUE DATA
 // ─────────────────────────────
+router.get("/all", auth, getAllLeagues);
 router.get("/:leagueId/teams", auth, getLeagueTeams);
 router.get("/:leagueId/ranking", auth, getLeagueRanking);
 

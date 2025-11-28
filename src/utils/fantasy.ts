@@ -25,3 +25,8 @@ export async function getStatusId(scope: string, code: string) {
     );
     return res.rows[0]?.id;
 }
+
+export async function getUsername(userId: number) {
+    const res = await pool.query(`SELECT username FROM hoopstats.users WHERE id = $1`, [userId]);
+    return res.rows.length ? res.rows[0].username : null;
+}

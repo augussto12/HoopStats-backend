@@ -7,27 +7,32 @@ import { createNotification } from "./notificationController";
 // ================================================================
 export const createLeague = async (req: any, res: any) => {
     try {
-        console.log("[CREATE LEAGUE] Iniciando proceso...");
-
         const userId = req.user.userId;
-        const { name, privacy = "public", description = null } = req.body;
 
-        console.log("➡️ Usuario:", userId);
-        console.log("➡️ Nombre liga:", name);
-        console.log("➡️ Privacidad:", privacy);
+        const {
+            name,
+            privacy = "public",
+            description = null,
+            maxTeams = null
+        } = req.body;
 
+        // VALIDACIÓN NOMBRE
         if (!name || name.trim().length < 3) {
             return res.status(400).json({ error: "El nombre debe tener al menos 3 caracteres" });
         }
 
-        // ⭐ Máximo 3 ligas creadas
-        console.log("📌 Verificando cantidad de ligas creadas por el usuario...");
+        // VALIDACIÓN maxTeams
+        if (maxTeams !== null && (isNaN(maxTeams) || maxTeams < 2 || maxTeams > 50)) {
+            return res.status(400).json({ error: "maxTeams debe estar entre 2 y 50" });
+        }
+
+        // LIMITE DE LIGAS
         const countRes = await pool.query(
-            `SELECT COUNT(*) FROM hoopstats.fantasy_leagues WHERE created_by = $1`,
+            `SELECT COUNT(*) 
+             FROM hoopstats.fantasy_leagues 
+             WHERE created_by = $1`,
             [userId]
         );
-
-        console.log("➡️ Ligas creadas:", Number(countRes.rows[0].count));
 
         if (Number(countRes.rows[0].count) >= 3) {
             return res.status(400).json({
@@ -35,30 +40,29 @@ export const createLeague = async (req: any, res: any) => {
             });
         }
 
-        // Obtener el status "league.active"
-        console.log("📌 Obteniendo status_id para 'league.active'...");
         const activeLeagueStatusId = await getStatusId("league", "active");
-        console.log("➡️ status_id activo:", activeLeagueStatusId);
 
-        // Crear liga
-        console.log("📌 Insertando liga en la base de datos...");
+        // CREAR LIGA
         const leagueRes = await pool.query(
             `INSERT INTO hoopstats.fantasy_leagues 
-                (name, description, created_by, privacy, status_id)
-             VALUES ($1, $2, $3, $4, $5)
-             RETURNING id, name, privacy, created_by, status_id`,
-            [name.trim(), description, userId, privacy, activeLeagueStatusId]
+                (name, description, created_by, privacy, max_teams, status_id)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING id, name, description, privacy, max_teams, created_by, status_id`,
+            [
+                name.trim(),
+                description,
+                userId,
+                privacy,
+                maxTeams,
+                activeLeagueStatusId
+            ]
         );
 
         const leagueId = leagueRes.rows[0].id;
-        console.log("➡️ Liga creada con ID:", leagueId);
 
-        // Insertar al creador como admin y miembro activo
-        console.log("📌 Obteniendo status_id de 'membership.active'...");
         const membershipActiveId = await getStatusId("membership", "active");
-        console.log("➡️ status_id membership.active:", membershipActiveId);
 
-        console.log("📌 Insertando creador como miembro admin...");
+        // AUTO-ASIGNAR ADMIN
         await pool.query(
             `
             INSERT INTO hoopstats.fantasy_league_teams 
@@ -70,18 +74,63 @@ export const createLeague = async (req: any, res: any) => {
             [leagueId, membershipActiveId, userId]
         );
 
-        console.log("✔️ Creador insertado como administrador.");
-
         return res.json({
             message: "Liga creada correctamente",
             league: leagueRes.rows[0]
         });
 
     } catch (err) {
-        console.error("🔥 ERROR CRÍTICO creando la liga:", err);
+        console.error(err);
         return res.status(500).json({ error: "Error al crear la liga" });
     }
 };
+
+
+// ================================================================
+//                TRAER TODAS LAS LIGAS
+// ================================================================
+export const getAllLeagues = async (req: any, res: any) => {
+    try {
+        const leaguesRes = await pool.query(`
+            SELECT 
+                fl.id,
+                fl.name,
+                fl.description,
+                fl.privacy,
+                fl.max_teams, 
+                fl.created_at,
+
+                sl.code AS status_code,
+                sl.description AS status_description,
+
+                u.username AS creator_username,
+
+                (
+                    SELECT COUNT(*)
+                    FROM hoopstats.fantasy_league_teams flt
+                    WHERE flt.league_id = fl.id
+                ) AS current_users
+
+            FROM hoopstats.fantasy_leagues fl
+            JOIN hoopstats.users u 
+                ON u.id = fl.created_by
+            JOIN hoopstats.fantasy_league_statuses sl
+                ON sl.id = fl.status_id
+                AND sl.scope = 'league'
+
+            ORDER BY fl.created_at DESC
+        `);
+
+        return res.json(leaguesRes.rows);
+
+    } catch (err) {
+        console.error("Error getAllLeagues:", err);
+        return res.status(500).json({ error: "Error al obtener ligas" });
+    }
+};
+
+
+
 
 // ================================================================
 //                ACTUALIZAR PRIVACIDAD / INFO LIGA
@@ -239,7 +288,7 @@ export const getMyLeagues = async (req: any, res: any) => {
 
 
 // ================================================================
-//              TRANSFERIR ADMINISTRACIÓN
+//              TOGGLE DE ADMINISTRACIÓN (PROMOVER / REVOCAR)
 // ================================================================
 export const transferAdmin = async (req: any, res: any) => {
     try {
@@ -247,6 +296,7 @@ export const transferAdmin = async (req: any, res: any) => {
         const leagueId = parseInt(req.params.leagueId);
         const { targetUserId } = req.body;
 
+        // 1. Validar que el usuario que hace la acción es admin
         const current = await pool.query(`
             SELECT ft.id AS team_id
             FROM hoopstats.fantasy_league_teams flt
@@ -258,36 +308,72 @@ export const transferAdmin = async (req: any, res: any) => {
             return res.status(403).json({ error: "No sos admin de esta liga" });
         }
 
-        // 👉 Actualizar admin
+        // 2. Verificar si el target actualmente es admin
+        const target = await pool.query(`
+            SELECT flt.is_admin
+            FROM hoopstats.fantasy_league_teams flt
+            JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
+            WHERE flt.league_id = $1 AND ft.user_id = $2
+        `, [leagueId, targetUserId]);
+
+        if (target.rows.length === 0) {
+            return res.status(404).json({ error: "El usuario no forma parte de la liga" });
+        }
+
+        const isCurrentlyAdmin = target.rows[0].is_admin;
+
+        // 3. Toggle admin
+        const newStatus = !isCurrentlyAdmin;
+
         await pool.query(`
             UPDATE hoopstats.fantasy_league_teams flt
-            SET is_admin = true
+            SET is_admin = $3
             FROM hoopstats.fantasy_teams ft
             WHERE flt.league_id = $1
             AND ft.id = flt.fantasy_team_id
             AND ft.user_id = $2
-        `, [leagueId, targetUserId]);
+        `, [leagueId, targetUserId, newStatus]);
 
-        // Traer info para notificación
-        const leagueRes = await pool.query(`SELECT name FROM hoopstats.fantasy_leagues WHERE id = $1`, [leagueId]);
+
+        // 4. Obtener nombre de liga
+        const leagueRes = await pool.query(`
+            SELECT name FROM hoopstats.fantasy_leagues WHERE id = $1
+        `, [leagueId]);
+
         const leagueName = leagueRes.rows[0].name;
 
-        // Notificación para el nuevo admin
-        await createNotification(
-            targetUserId,
-            "admin_promoted",
-            "Ahora sos administrador",
-            `Fuiste promovido a administrador en "${leagueName}"`,
-            { leagueId }
-        );
 
-        return res.json({ message: "Administración transferida correctamente" });
+        // 5. Notificación según acción
+        if (newStatus) {
+            await createNotification(
+                targetUserId,
+                "admin_promoted",
+                "Ahora sos administrador",
+                `Fuiste promovido a administrador en "${leagueName}"`,
+                { leagueId }
+            );
+        } else {
+            await createNotification(
+                targetUserId,
+                "admin_revoked",
+                "Ya no sos administrador",
+                `Se te revocó el rol de administrador en "${leagueName}"`,
+                { leagueId }
+            );
+        }
+
+        return res.json({
+            message: newStatus
+                ? "Usuario promovido a administrador"
+                : "El usuario ya no es administrador"
+        });
 
     } catch (err) {
-        console.error("Error transferring admin:", err);
-        return res.status(500).json({ error: "Error al transferir administración" });
+        console.error("Error toggling admin:", err);
+        return res.status(500).json({ error: "Error al cambiar rol de administrador" });
     }
 };
+
 
 
 

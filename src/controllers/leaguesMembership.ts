@@ -1,5 +1,5 @@
 import { pool } from "../db";
-import { getStatusId } from "../utils/fantasy";
+import { getStatusId, getUsername } from "../utils/fantasy";
 import { createNotification } from "./notificationController";
 
 // ================================================================
@@ -65,14 +65,16 @@ export const requestJoinLeague = async (req: any, res: any) => {
 
         const requestId = reqInsert.rows[0].id;
 
-        // → Notificación al admin creador
+        const byUserName = await getUsername(userId);
+
         await createNotification(
             created_by,
             "join_request",
             "Nueva solicitud de unión",
-            "Un usuario pidió unirse a tu liga",
-            { requestId, leagueId, byUserId: userId, leagueName }
+            `${byUserName} pidió unirse a tu liga`,
+            { requestId, leagueId, byUserId: userId, byUserName, leagueName }
         );
+
 
 
         return res.json({ message: "Solicitud enviada al administrador" });
@@ -237,6 +239,7 @@ export const inviteUserToLeague = async (req: any, res: any) => {
         const leagueId = parseInt(req.params.leagueId);
         const { userId } = req.body;
 
+        // Verificar admin
         const check = await pool.query(`
             SELECT 1
             FROM hoopstats.fantasy_league_teams flt
@@ -248,25 +251,32 @@ export const inviteUserToLeague = async (req: any, res: any) => {
             return res.status(403).json({ error: "No sos admin de esta liga" });
         }
 
+        // Obtener nombre de liga (FALTABA)
+        const leagueRes = await pool.query(`
+            SELECT name FROM hoopstats.fantasy_leagues WHERE id = $1
+        `, [leagueId]);
+
+        const leagueName = leagueRes.rows[0].name;
+
         const pendingId = await getStatusId("invite", "pending");
 
         const invInsert = await pool.query(`
-    INSERT INTO hoopstats.fantasy_league_invites
-    (league_id, invited_user_id, invited_by, status_id)
-    VALUES ($1, $2, $3, $4)
-    RETURNING id
-`, [leagueId, userId, adminId, pendingId]);
+            INSERT INTO hoopstats.fantasy_league_invites
+            (league_id, invited_user_id, invited_by, status_id)
+            VALUES ($1, $2, $3, $4)
+            RETURNING id
+        `, [leagueId, userId, adminId, pendingId]);
 
         const inviteId = invInsert.rows[0].id;
 
+        // Notificación corregida
         await createNotification(
             userId,
             "invite_received",
             "Nueva invitación",
-            `Fuiste invitado a unirte a la liga "${req.leagueName}"`,
-            { inviteId, leagueId }
+            `Fuiste invitado a unirte a la liga "${leagueName}"`,
+            { inviteId, leagueId, leagueName }
         );
-
 
         return res.json({ message: "Invitación enviada" });
 
@@ -330,13 +340,14 @@ export const acceptInvite = async (req: any, res: any) => {
             WHERE id = $2
         `, [acceptedId, inviteId]);
 
-        // → Notificación al admin
+        const userName = await getUsername(userId);
+
         await createNotification(
             invite.created_by,
             "invite_accepted",
             "Invitación aceptada",
-            `El usuario aceptó tu invitación a la liga "${invite.league_name}"`,
-            { inviteId, leagueId: invite.league_id, userId }
+            `${userName} aceptó tu invitación a la liga "${invite.league_name}"`,
+            { inviteId, leagueId: invite.league_id, byUserId: userId, byUserName: userName }
         );
 
         return res.json({ message: "Te uniste a la liga" });
@@ -382,14 +393,16 @@ export const rejectInvite = async (req: any, res: any) => {
             WHERE id = $2
         `, [rejectedId, inviteId]);
 
-        // → Notificación al admin
+        const userName = await getUsername(userId);
+
         await createNotification(
             invite.created_by,
             "invite_rejected",
             "Invitación rechazada",
-            `El usuario rechazó tu invitación a la liga "${invite.league_name}"`,
-            { inviteId, leagueId: invite.league_id, userId }
+            `${userName} rechazó tu invitación a la liga "${invite.league_name}"`,
+            { inviteId, leagueId: invite.league_id, byUserId: userId, byUserName: userName }
         );
+
 
         return res.json({ message: "Invitación rechazada" });
 
