@@ -9,8 +9,6 @@ export const runPredictionCron = async () => {
             `SELECT * FROM hoopstats.predicciones WHERE procesada = false`
         );
 
-        console.log(`Predicciones pendientes: ${pendientes.length}`);
-
         if (pendientes.length === 0) return;
 
         const gameCache = new Map<number, any>();
@@ -64,7 +62,6 @@ export const runPredictionCron = async () => {
                         scoreCache.set(cacheKey, puntos);
                     }
 
-                    // 🔥 ACTUALIZAR también puntos reales
                     await client.query(
                         `UPDATE hoopstats.predicciones
                          SET puntos_obtenidos = $1,
@@ -81,8 +78,6 @@ export const runPredictionCron = async () => {
                          WHERE id = $2`,
                         [puntos, pred.user_id]
                     );
-
-                    console.log(`Pred #${pred.id} → User ${pred.user_id} +${puntos} pts`);
                     procesadas++;
 
                 } catch (err) {
@@ -91,7 +86,6 @@ export const runPredictionCron = async () => {
             }
 
             await client.query("COMMIT");
-            console.log(`Cron finalizado → ${procesadas} predicciones procesadas.`);
 
         } catch (err) {
             console.error("Error en DB, ejecutando ROLLBACK:", err);

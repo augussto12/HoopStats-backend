@@ -12,7 +12,11 @@ import {
     getLeagueRanking,
     getMyCreatedLeagues,
     getMyAdminStatus,
-    getAllLeagues
+    getAllLeagues,
+    getLeaguesWhereImAdmin,
+    getLeagueDetails,
+    isMemberOfLeague,
+    leaveLeague
 } from "../controllers/fantasyLeaguesController";
 
 const router = Router();
@@ -29,6 +33,10 @@ router.put("/:leagueId", auth, updateLeague);
 router.get("/my-admin-status", auth, getMyAdminStatus);
 router.get("/my-leagues", auth, getMyLeagues);
 router.get("/my-created-leagues", auth, getMyCreatedLeagues);
+router.get("/admin-leagues", auth, getLeaguesWhereImAdmin);
+router.get("/league-details/:leagueId", auth, getLeagueDetails);
+router.get("/membership/is-member/:leagueId", auth, isMemberOfLeague);
+router.post("/membership/leagues/:leagueId/leave", auth, leaveLeague);
 
 // ─────────────────────────────
 //      ADMINISTRACIÓN LIGA

@@ -44,11 +44,23 @@ export const requestJoinLeague = async (req: any, res: any) => {
         if (privacy === "public") {
             const activeId = await getStatusId("membership", "active");
 
-            await pool.query(`
+            const reqInsert = await pool.query(`
                 INSERT INTO hoopstats.fantasy_league_teams 
                 (league_id, fantasy_team_id, status_id)
                 VALUES ($1, $2, $3)
             `, [leagueId, teamId, activeId]);
+
+            const requestId = reqInsert.rows[0].id;
+
+            const byUserName = await getUsername(userId);
+
+            await createNotification(
+                created_by,
+                "join",
+                "Nuevo miembro en tu liga",
+                `${byUserName} se unió a ${leagueName}`,
+                { requestId, leagueId, byUserId: userId, byUserName, leagueName }
+            );
 
             return res.json({ message: "Te uniste a la liga (pública)" });
         }
@@ -71,7 +83,7 @@ export const requestJoinLeague = async (req: any, res: any) => {
             created_by,
             "join_request",
             "Nueva solicitud de unión",
-            `${byUserName} pidió unirse a tu liga`,
+            `${byUserName} pidió unirse a ${leagueName}`,
             { requestId, leagueId, byUserId: userId, byUserName, leagueName }
         );
 
@@ -387,12 +399,21 @@ export const rejectInvite = async (req: any, res: any) => {
 
         const rejectedId = await getStatusId("invite", "rejected");
 
+        // Cambiar estado
         await pool.query(`
             UPDATE hoopstats.fantasy_league_invites
             SET status_id = $1
             WHERE id = $2
         `, [rejectedId, inviteId]);
 
+
+        await pool.query(`
+            DELETE FROM hoopstats.fantasy_league_teams
+            WHERE league_id = $1 AND fantasy_team_id = $2
+        `, [invite.league_id, userId]);
+
+
+        // Notificar al admin creador
         const userName = await getUsername(userId);
 
         await createNotification(
@@ -403,7 +424,6 @@ export const rejectInvite = async (req: any, res: any) => {
             { inviteId, leagueId: invite.league_id, byUserId: userId, byUserName: userName }
         );
 
-
         return res.json({ message: "Invitación rechazada" });
 
     } catch (err) {
@@ -411,6 +431,7 @@ export const rejectInvite = async (req: any, res: any) => {
         return res.status(500).json({ error: "Error al rechazar invitación" });
     }
 };
+
 
 
 
@@ -505,11 +526,11 @@ export const cancelInvite = async (req: any, res: any) => {
 // ================================================================
 export const promoteToAdmin = async (req: any, res: any) => {
     try {
-        const adminId = req.user.userId;              // admin que hace la acción
+        const adminId = req.user.userId;
         const leagueId = parseInt(req.params.leagueId);
-        const targetUserId = parseInt(req.params.userId); // usuario al que convertimos en admin
+        const targetUserId = parseInt(req.params.userId);
 
-        // 1. Verificar que el solicitante sea admin de la liga
+        // Verificar admin que ejecuta acción
         const check = await pool.query(`
             SELECT 1
             FROM hoopstats.fantasy_league_teams flt
@@ -521,7 +542,7 @@ export const promoteToAdmin = async (req: any, res: any) => {
             return res.status(403).json({ error: "No sos admin de esta liga" });
         }
 
-        // 2. Obtener team del usuario objetivo
+        // Obtener team del usuario objetivo
         const team = await pool.query(`
             SELECT id FROM hoopstats.fantasy_teams WHERE user_id = $1
         `, [targetUserId]);
@@ -532,12 +553,30 @@ export const promoteToAdmin = async (req: any, res: any) => {
 
         const teamId = team.rows[0].id;
 
-        // 3. Promover a admin
+        // Obtener datos de liga para notificación
+        const league = await pool.query(`
+            SELECT name FROM hoopstats.fantasy_leagues WHERE id = $1
+        `, [leagueId]);
+
+        const leagueName = league.rows[0].name;
+
+        // Obtener nombre de quien promueve
+        const performerName = await getUsername(adminId);
+
+        // Promover a admin
         await pool.query(`
             UPDATE hoopstats.fantasy_league_teams
             SET is_admin = true
             WHERE league_id = $1 AND fantasy_team_id = $2
         `, [leagueId, teamId]);
+
+        await createNotification(
+            targetUserId,
+            "admin_promoted",
+            "Fuiste promovido a administrador",
+            `Se te asignó rol de administrador en la liga "${leagueName}"`,
+            { leagueId, leagueName }
+        );
 
         return res.json({ message: "Usuario promovido a administrador" });
 
@@ -552,11 +591,11 @@ export const promoteToAdmin = async (req: any, res: any) => {
 // ================================================================
 export const demoteAdmin = async (req: any, res: any) => {
     try {
-        const adminId = req.user.userId;             // admin que realiza la acción
+        const adminId = req.user.userId;
         const leagueId = parseInt(req.params.leagueId);
         const targetUserId = parseInt(req.params.userId);
 
-        // 1. Verificar que el solicitante sea admin
+        // Verificar admin que ejecuta acción
         const check = await pool.query(`
             SELECT 1
             FROM hoopstats.fantasy_league_teams flt
@@ -568,19 +607,20 @@ export const demoteAdmin = async (req: any, res: any) => {
             return res.status(403).json({ error: "No sos admin de esta liga" });
         }
 
-        // 2. Obtener creador de la liga
+        // Obtener creador
         const league = await pool.query(`
-            SELECT created_by FROM hoopstats.fantasy_leagues WHERE id = $1
+            SELECT created_by, name FROM hoopstats.fantasy_leagues WHERE id = $1
         `, [leagueId]);
 
         const creatorId = league.rows[0].created_by;
+        const leagueName = league.rows[0].name;
 
-        // REGLA DE ORO: el creador NO puede perder admin
+        // El creador NO puede perder admin
         if (targetUserId === creatorId) {
-            return res.status(403).json({ error: "No podés quitar el rol de admin al creador de la liga" });
+            return res.status(403).json({ error: "No podés quitar admin al creador de la liga" });
         }
 
-        // 3. Obtener team del usuario objetivo
+        // Obtener team del usuario objetivo
         const team = await pool.query(`
             SELECT id FROM hoopstats.fantasy_teams WHERE user_id = $1
         `, [targetUserId]);
@@ -591,12 +631,22 @@ export const demoteAdmin = async (req: any, res: any) => {
 
         const teamId = team.rows[0].id;
 
-        // 4. Quitar admin
+        // Quitar admin
         await pool.query(`
             UPDATE hoopstats.fantasy_league_teams
             SET is_admin = false
             WHERE league_id = $1 AND fantasy_team_id = $2
         `, [leagueId, teamId]);
+
+        const performerName = await getUsername(adminId);
+
+        await createNotification(
+            targetUserId,
+            "admin_demoted",
+            "Ya no sos administrador",
+            `Has dejado de tener el rol de administrador en la liga "${leagueName}"`,
+            { leagueId, leagueName }
+        );
 
         return res.json({ message: "El usuario ya no es administrador" });
 
@@ -605,6 +655,7 @@ export const demoteAdmin = async (req: any, res: any) => {
         return res.status(500).json({ error: "Error al bajar de administrador" });
     }
 };
+
 
 // ================================================================
 //        NOTIFICACIONES PARA EL CREADOR DE LA LIGA

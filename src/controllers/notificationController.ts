@@ -33,6 +33,7 @@ export const getMyNotifications = async (req: any, res: any) => {
             SELECT *
             FROM hoopstats.notifications
             WHERE user_id = $1
+              AND is_read = false
             ORDER BY created_at DESC
             `,
             [userId]
@@ -45,6 +46,7 @@ export const getMyNotifications = async (req: any, res: any) => {
         return res.status(500).json({ error: "Error al obtener notificaciones" });
     }
 };
+
 
 
 export const markAsRead = async (req: any, res: any) => {
@@ -75,19 +77,21 @@ export const deleteNotification = async (req: any, res: any) => {
         const userId = req.user.userId;
         const notificationId = parseInt(req.params.id);
 
+        // Solo marcar como leída, NO borrar
         await pool.query(
             `
-            DELETE FROM hoopstats.notifications
+            UPDATE hoopstats.notifications
+            SET is_read = true
             WHERE id = $1 AND user_id = $2
             `,
             [notificationId, userId]
         );
 
-        return res.json({ message: "Notificación eliminada" });
+        return res.json({ message: "Notificación ocultada (soft delete)" });
 
     } catch (err) {
         console.error("Error deleteNotification:", err);
-        return res.status(500).json({ error: "Error al eliminar notificación" });
+        return res.status(500).json({ error: "Error al ocultar notificación" });
     }
 };
 

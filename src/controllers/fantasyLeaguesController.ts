@@ -357,7 +357,7 @@ export const transferAdmin = async (req: any, res: any) => {
                 targetUserId,
                 "admin_revoked",
                 "Ya no sos administrador",
-                `Se te revocó el rol de administrador en "${leagueName}"`,
+                `Has dejado de tener el rol de administrador en la liga "${leagueName}"`,
                 { leagueId }
             );
         }
@@ -597,6 +597,161 @@ export const getMyCreatedLeagues = async (req: any, res: any) => {
 };
 
 
+
+// ================================================================
+//             LIGAS DE LAS QUE SOY ADMIN
+// ================================================================
+export const getLeaguesWhereImAdmin = async (req: any, res: any) => {
+    try {
+        const userId = req.user.userId;
+
+        // 1) TRAER LIGAS DONDE SOY ADMIN
+        const leaguesRes = await pool.query(
+            `
+            SELECT fl.*
+            FROM hoopstats.fantasy_leagues fl
+            JOIN hoopstats.fantasy_league_teams flt ON flt.league_id = fl.id
+            JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
+            WHERE ft.user_id = $1
+            AND flt.is_admin = true
+            ORDER BY fl.created_at DESC
+            `,
+            [userId]
+        );
+
+        const leagues = leaguesRes.rows;
+        const response = [];
+
+        // 2) RECORRER LIGAS PARA ARMAR LA MISMA ESTRUCTURA DE getMyCreatedLeagues
+        for (const league of leagues) {
+            const leagueId = league.id;
+
+            // --- MIEMBROS ---
+            const membersRes = await pool.query(
+                `
+            SELECT 
+                u.id,
+                u.username,
+                u.email,
+                flt.is_admin,
+                sl.code AS status,
+                sl.description AS status_desc
+            FROM hoopstats.fantasy_league_teams flt
+            JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
+            JOIN hoopstats.users u ON u.id = ft.user_id
+            JOIN hoopstats.fantasy_league_statuses sl ON sl.id = flt.status_id
+            WHERE flt.league_id = $1
+            AND sl.code IN ('active', 'pending') 
+            `,
+                [leagueId]
+            );
+
+
+            const members = membersRes.rows.map(m => ({
+                id: m.id,
+                username: m.username,
+                email: m.email,
+                role: m.is_admin ? "admin" : "member",
+                status: m.status,
+                status_desc: m.status_desc,
+                origin: "team"
+            }));
+
+            // --- INVITACIONES ---
+            const invitesRes = await pool.query(
+                `
+            SELECT 
+                i.id AS invite_id,
+                i.invited_user_id AS user_id,
+                u.username,
+                u.email,
+                sl.code AS status,
+                sl.description AS status_desc
+            FROM hoopstats.fantasy_league_invites i
+            JOIN hoopstats.users u ON u.id = i.invited_user_id
+            JOIN hoopstats.fantasy_league_statuses sl ON sl.id = i.status_id
+            WHERE i.league_id = $1
+            AND sl.code = 'pending' 
+            `,
+                [leagueId]
+            );
+
+
+            const invites = invitesRes.rows.map(i => ({
+                id: i.user_id,
+                username: i.username,
+                email: i.email,
+                status: i.status,
+                status_desc: i.status_desc,
+                invite_id: i.invite_id,
+                role: "member",
+                origin: "invite"
+            }));
+
+            // MISMA ESTRUCTURA QUE getMyCreatedLeagues
+            response.push({
+                league,
+                members: [...members, ...invites]
+            });
+        }
+
+        return res.json(response);
+
+    } catch (err) {
+        console.error("Error getLeaguesWhereImAdmin:", err);
+        return res.status(500).json({ error: "Error al obtener ligas administradas" });
+    }
+};
+
+
+export const getLeagueDetails = async (req: any, res: any) => {
+    try {
+        const leagueId = parseInt(req.params.leagueId);
+
+        if (isNaN(leagueId)) {
+            return res.status(400).json({ error: "ID de liga inválido" });
+        }
+
+        // Datos básicos de la liga
+        const leagueRes = await pool.query(`
+            SELECT *
+            FROM hoopstats.fantasy_leagues
+            WHERE id = $1
+        `, [leagueId]);
+
+        if (leagueRes.rows.length === 0) {
+            return res.status(404).json({ error: "Liga no encontrada" });
+        }
+
+        const league = leagueRes.rows[0];
+
+        // Equipos + puntos reales
+        const teamsRes = await pool.query(`
+            SELECT 
+                ft.id AS team_id,
+                ft.name AS team_name,
+                u.username AS owner,
+                COALESCE(flt.points, 0) AS points
+            FROM hoopstats.fantasy_league_teams flt
+            JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
+            JOIN hoopstats.users u ON u.id = ft.user_id
+            WHERE flt.league_id = $1
+            ORDER BY flt.points DESC
+        `, [leagueId]);
+
+        return res.json({
+            league,
+            teams: teamsRes.rows
+        });
+
+    } catch (err) {
+        console.error("Error getLeagueDetails:", err);
+        return res.status(500).json({ error: "Error al obtener datos de liga" });
+    }
+};
+
+
+
 // ================================================================
 //                          ESTADO ADMIN
 // ================================================================
@@ -684,5 +839,85 @@ export const deleteMember = async (req: any, res: any) => {
     } catch (err) {
         console.error("Error deleting member:", err);
         return res.status(500).json({ error: "Error al eliminar usuario" });
+    }
+};
+
+export const isMemberOfLeague = async (req: any, res: any) => {
+    try {
+        const userId = req.user.userId;
+        const leagueId = parseInt(req.params.leagueId);
+
+        const result = await pool.query(
+            `
+            SELECT flt.is_admin
+            FROM hoopstats.fantasy_league_teams flt
+            JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
+            WHERE flt.league_id = $1
+            AND ft.user_id = $2
+            LIMIT 1
+            `,
+            [leagueId, userId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.json({ isMember: false, isAdmin: false });
+        }
+
+        return res.json({
+            isMember: true,
+            isAdmin: result.rows[0].is_admin
+        });
+
+    } catch (err) {
+        console.error("Error isMember:", err);
+        return res.status(500).json({ error: "Error al verificar membresía" });
+    }
+};
+
+export const leaveLeague = async (req: any, res: any) => {
+    try {
+        const userId = req.user.userId;
+        const leagueId = parseInt(req.params.leagueId);
+
+        // No dejar salir al creador
+        const league = await pool.query(
+            `SELECT created_by, name FROM hoopstats.fantasy_leagues WHERE id = $1`,
+            [leagueId]
+        );
+
+        if (league.rows.length === 0) {
+            return res.status(404).json({ error: "Liga no encontrada" });
+        }
+
+        if (league.rows[0].created_by === userId) {
+            return res.status(403).json({
+                error: "El creador no puede abandonar la liga"
+            });
+        }
+
+        // Eliminar membresía
+        const deleteRes = await pool.query(
+            `
+            DELETE FROM hoopstats.fantasy_league_teams flt
+            USING hoopstats.fantasy_teams ft
+            WHERE flt.fantasy_team_id = ft.id
+            AND ft.user_id = $1
+            AND flt.league_id = $2
+            RETURNING flt.fantasy_team_id
+            `,
+            [userId, leagueId]
+        );
+
+        if (deleteRes.rows.length === 0) {
+            return res.status(404).json({
+                error: "No sos miembro de la liga"
+            });
+        }
+
+        return res.json({ message: "Abandonaste la liga correctamente" });
+
+    } catch (err) {
+        console.error("Error leaveLeague:", err);
+        return res.status(500).json({ error: "Error al abandonar liga" });
     }
 };

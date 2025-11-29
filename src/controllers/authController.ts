@@ -30,6 +30,30 @@ const sendEmail = async (to: string, subject: string, html: string) => {
 };
 
 
+// GET /auth/me
+export const me = async (req: any, res: any) => {
+    try {
+        const userId = req.user.userId;
+
+        const result = await pool.query(
+            `SELECT id, fullname, username, email, gender, email_verified
+             FROM hoopstats.users
+             WHERE id = $1`,
+            [userId]
+        );
+
+        if (result.rows.length === 0)
+            return res.status(404).json({ error: "Usuario no encontrado" });
+
+        return res.json(result.rows[0]);
+
+    } catch (err) {
+        console.error("me error:", err);
+        return res.status(500).json({ error: "Error en el servidor" });
+    }
+};
+
+
 // REGISTER (con verificación de email)
 export const register = async (req: any, res: any) => {
     try {
@@ -253,7 +277,7 @@ export const login = async (req: any, res: any) => {
         const token = jwt.sign(
             { userId: user.id },
             process.env.JWT_SECRET!,
-            { expiresIn: "1d" }
+            { expiresIn: "4h" }
         );
 
         return res.json({
@@ -275,6 +299,31 @@ export const login = async (req: any, res: any) => {
 
         console.error("Login error:", err);
         return res.status(500).json({ error: "Error en el servidor" });
+    }
+};
+
+
+// REFRESH TOKEN
+export const refresh = async (req: any, res: any) => {
+    try {
+        const userId = req.user?.userId;
+
+        if (!userId) {
+            return res.status(401).json({ error: "Token inválido" });
+        }
+
+        // Generamos un nuevo token válido por 4 horas
+        const newToken = jwt.sign(
+            { userId },
+            process.env.JWT_SECRET!,
+            { expiresIn: "4h" }
+        );
+
+        return res.json({ token: newToken });
+
+    } catch (err) {
+        console.error("refresh error:", err);
+        return res.status(500).json({ error: "Error al refrescar sesión" });
     }
 };
 

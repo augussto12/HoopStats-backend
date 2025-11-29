@@ -68,10 +68,8 @@ export const runFantasyCron = async () => {
             }
         }
 
-        console.log(`🟣 Partidos a procesar: ${gamesToProcess.length}`);
 
         if (gamesToProcess.length === 0) {
-            console.log("No hay partidos nuevos para procesar.");
             return;
         }
 
@@ -84,7 +82,6 @@ export const runFantasyCron = async () => {
         const fantasyPlayers = fpRes.rows;
 
         if (fantasyPlayers.length === 0) {
-            console.log("No hay jugadores en fantasy.");
             return;
         }
 
@@ -130,8 +127,6 @@ export const runFantasyCron = async () => {
                 playerPointsMap.set(playerId, prev + pts);
             }
         }
-
-        console.log(`Jugadores con puntos: ${playerPointsMap.size}`);
 
         if (playerPointsMap.size === 0) return;
 
@@ -208,7 +203,6 @@ export const runFantasyCron = async () => {
             }
 
             await client.query("COMMIT");
-            console.log("Fantasy actualizado correctamente.");
 
         } catch (err) {
             console.error("Error en DB:", err);
@@ -216,8 +210,6 @@ export const runFantasyCron = async () => {
         } finally {
             client.release();
         }
-
-        console.log("Cron Fantasy finalizado.");
 
     } catch (err) {
         console.error("Error general del cron:", err);

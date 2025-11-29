@@ -25,7 +25,6 @@ export const getAllUsers = async (req: any, res: any) => {
 // Obtener datos del usuario autenticado
 export const getMyProfile = async (req: any, res: any) => {
     try {
-        console.log("request", req.user);
         const userId = req.user.userId;
 
         const result = await pool.query(
@@ -37,7 +36,6 @@ export const getMyProfile = async (req: any, res: any) => {
 
 
         const user = result.rows[0];
-        console.log("usuario", user);
         if (!user) {
             return res.status(404).json({ error: "Usuario no encontrado" });
         }

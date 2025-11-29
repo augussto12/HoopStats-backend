@@ -36,8 +36,8 @@ router.post("/invites/:inviteId/reject", auth, rejectInvite);
 router.delete("/invites/:inviteId/cancel", auth, cancelInvite);
 
 router.get("/my/invites", auth, getMyInvites);
-router.get("/my/league-invites", auth, getInvitesForMyLeagues);      // ✅ NUEVO
-router.delete("/invites/:inviteId/delete", auth, deleteInviteNotification);  // ✅ NUEVO
+router.get("/my/league-invites", auth, getInvitesForMyLeagues);
+router.delete("/invites/:inviteId/delete", auth, deleteInviteNotification);
 
 // ─────────────────────────────
 //           ADMIN

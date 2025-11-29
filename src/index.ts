@@ -19,7 +19,7 @@ import favoritesRoutes from "./routes/favoritesRoutes";
 import bestPlayersRoutes from "./routes/bestPlayersRoutes";
 import marketLockRoutes from "./routes/marketLockRoutes";
 import marketLockCronRoutes from "./routes/marketLockCronRoutes";
-
+import gameRoutes from "./routes/gamesRoutes"
 import { configureSecurity } from "./config/security";
 
 dotenv.config();
@@ -98,7 +98,7 @@ app.use("/api/best-players", bestPlayersRoutes);
 
 app.use("/api/market-lock", marketLockRoutes);
 app.use("/api/market-lock-cron", marketLockCronRoutes);
-
+app.use("/games", gameRoutes);
 app.get("/api/test", (req, res) => res.json({ ok: true }));
 
 app.get("/api/protected", auth, (req, res) => {
