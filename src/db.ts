@@ -12,26 +12,15 @@ if (!process.env.DATABASE_URL) {
 }
 
 /* ============================
-      ENTORNO SEGURO
-============================ */
-const env = process.env.NODE_ENV?.trim().toLowerCase() || "production";
-const isProduction = env === "production";
-
-/* ============================
-      CONFIG SSL
-============================ */
-const sslConfig = isProduction
-  ? { rejectUnauthorized: true }
-  : false;
-
-/* ============================
       POOL
 ============================ */
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: sslConfig,
 
-  // Seguridad extra
+  // Railway usa SSL obligatorio con certificado autofirmado
+  ssl: { rejectUnauthorized: false },
+
+  // Seguridad y performance
   connectionTimeoutMillis: 5000,
   idleTimeoutMillis: 10000,
   max: 15,
