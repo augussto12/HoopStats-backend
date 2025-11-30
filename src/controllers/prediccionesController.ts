@@ -175,7 +175,6 @@ export const getPredictionsRanking = async (req: any, res: any) => {
 // Sumar puntos a los usuarios
 export const sumarPuntosDePredicciones = async (req: any, res: any) => {
     try {
-        console.log("Sumando puntos desde predicciones procesadas...");
 
         // 1. Obtener suma de puntos por usuario
         const { rows: usuarios } = await pool.query(
@@ -208,7 +207,6 @@ export const sumarPuntosDePredicciones = async (req: any, res: any) => {
             }
 
             await client.query("COMMIT");
-            console.log("Puntos sumados correctamente");
 
             return res.json({
                 message: "Puntos sumados correctamente a los usuarios.",

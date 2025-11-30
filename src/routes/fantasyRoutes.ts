@@ -1,13 +1,15 @@
 import { Router } from "express";
 import { auth } from "../middlewares/auth";
-
 import {
   getMyTeam,
   createTeam,
   addPlayer,
   removePlayer,
   getRanking,
-  updateTeamName
+  updateTeamName,
+  getTradesToday,
+  getMyTransactions,
+  applyTrades,
 } from "../controllers/fantasyController";
 
 const router = Router();
@@ -17,9 +19,14 @@ router.get("/my-team", auth, getMyTeam);
 router.post("/create", auth, createTeam);
 router.put("/update-name", auth, updateTeamName);
 
-//   JUGADORES
+//   JUGADORES (cambios individuales)
 router.post("/add-player/:playerId", auth, addPlayer);
 router.delete("/remove-player/:playerId", auth, removePlayer);
+
+//   TRADES
+router.post("/apply-trades", auth, applyTrades);
+router.get("/trades/today", auth, getTradesToday);
+router.get("/trades/history", auth, getMyTransactions); 
 
 //   RANKING GLOBAL
 router.get("/ranking", getRanking);

@@ -50,6 +50,13 @@ export const runFantasyCron = async () => {
         const finishedGames = [...gamesYesterday, ...gamesToday]
             .filter(g => g.status.long === "Finished");
 
+        if (finishedGames.length > 0) {
+            await pool.query(`
+                UPDATE hoopstats.fantasy_teams
+                SET trades_remaining = 2
+            `);
+        }
+
         console.log(`Total partidos finalizados (ayer + hoy): ${finishedGames.length}`);
 
         if (finishedGames.length === 0) return;
@@ -68,10 +75,8 @@ export const runFantasyCron = async () => {
             }
         }
 
-        console.log(`🟣 Partidos a procesar: ${gamesToProcess.length}`);
 
         if (gamesToProcess.length === 0) {
-            console.log("No hay partidos nuevos para procesar.");
             return;
         }
 
@@ -84,7 +89,6 @@ export const runFantasyCron = async () => {
         const fantasyPlayers = fpRes.rows;
 
         if (fantasyPlayers.length === 0) {
-            console.log("No hay jugadores en fantasy.");
             return;
         }
 
@@ -131,8 +135,6 @@ export const runFantasyCron = async () => {
             }
         }
 
-        console.log(`Jugadores con puntos: ${playerPointsMap.size}`);
-
         if (playerPointsMap.size === 0) return;
 
         // 5. Guardar en DB
@@ -174,6 +176,29 @@ export const runFantasyCron = async () => {
                 );
             }
 
+            // 5.3 BIS → SUMAR PUNTOS A LAS LIGAS DEL EQUIPO
+            for (const [teamId, pts] of teamPointsMap.entries()) {
+                // obtener ligas del equipo
+                const leaguesRes = await client.query(
+                    `SELECT league_id 
+                    FROM hoopstats.fantasy_league_teams
+                    WHERE fantasy_team_id = $1`,
+                    [teamId]
+                );
+
+                // sumar puntos en cada liga
+                for (const row of leaguesRes.rows) {
+                    await client.query(
+                        `UPDATE hoopstats.fantasy_league_teams
+                        SET points = COALESCE(points, 0) + $1
+                        WHERE fantasy_team_id = $2
+                        AND league_id = $3`,
+                        [pts, teamId, row.league_id]
+                    );
+                }
+            }
+
+
             // 5.4 Registrar games procesados
             for (const g of gamesToProcess) {
                 await client.query(
@@ -185,7 +210,6 @@ export const runFantasyCron = async () => {
             }
 
             await client.query("COMMIT");
-            console.log("Fantasy actualizado correctamente.");
 
         } catch (err) {
             console.error("Error en DB:", err);
@@ -193,8 +217,6 @@ export const runFantasyCron = async () => {
         } finally {
             client.release();
         }
-
-        console.log("Cron Fantasy finalizado.");
 
     } catch (err) {
         console.error("Error general del cron:", err);

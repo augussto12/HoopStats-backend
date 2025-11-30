@@ -9,6 +9,10 @@ import { configureSecurity } from "./config/security";
 import authRoutes from "./routes/authRoutes";
 
 import fantasyRoutes from "./routes/fantasyRoutes";
+import fantasyLeaguesRoutes from "./routes/fantasyLeaguesRoutes";
+import fantasyTradesRoutes from "./routes/fantasyTradesRoutes";
+import leaguesMembershipRoutes from "./routes/leaguesMembershipRoutes";
+import notificationRoutes from "./routes/notificationRoutes";
 import playerRoutes from "./routes/playerRoutes";
 import teamRoutes from "./routes/teamRoutes";
 import predictionRoutes from "./routes/predictionRoutes";
@@ -16,10 +20,12 @@ import userRoutes from "./routes/usersRoutes";
 import cronRoutes from "./routes/cronRoutes";
 import favoritesRoutes from "./routes/favoritesRoutes";
 import bestPlayersRoutes from "./routes/bestPlayersRoutes";
-
+import marketLockRoutes from "./routes/marketLockRoutes";
+import marketLockCronRoutes from "./routes/marketLockCronRoutes";
+import gameRoutes from "./routes/gamesRoutes"
+import { configureSecurity } from "./config/security";
 
 dotenv.config();
-
 
 
 // ──────────────────────────────────────────
@@ -51,7 +57,7 @@ const app = express();
 // Railway usa proxy
 app.set("trust proxy", 1);
 
-// CORS primero
+// CORS
 app.use(cors({
     origin: [
         "http://localhost:4200",
@@ -62,26 +68,40 @@ app.use(cors({
     credentials: true,
 }));
 
-// Body parser SIEMPRE antes de sanitize o helmet
+// Body parser
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
-// Seguridad después del body parser
+// Seguridad
 configureSecurity(app);
 
 const PORT = process.env.PORT || 3000;
 
-// RUTAS
+// ──────────────────────────────────────────
+//                 RUTAS
+// ──────────────────────────────────────────
+
 app.use("/api/auth", authRoutes);
 app.use("/api/fantasy", fantasyRoutes);
+app.use("/api/notifications", notificationRoutes);
+
+app.use("/api/fantasy-leagues", fantasyLeaguesRoutes);
+app.use("/api/fantasy-trades", fantasyTradesRoutes);
+
+app.use("/api/fantasy-league-membership", leaguesMembershipRoutes);
+
 app.use("/api/players", playerRoutes);
 app.use("/api/teams", teamRoutes);
 app.use("/api/predictions", predictionRoutes);
+
 app.use("/api/users", userRoutes);
 app.use("/api/cron", cronRoutes);
 app.use("/api/favorites", favoritesRoutes);
 app.use("/api/best-players", bestPlayersRoutes);
 
+app.use("/api/market-lock", marketLockRoutes);
+app.use("/api/market-lock-cron", marketLockCronRoutes);
+app.use("/games", gameRoutes);
 app.get("/api/test", (req, res) => res.json({ ok: true }));
 
 app.get("/api/protected", auth, (req, res) => {

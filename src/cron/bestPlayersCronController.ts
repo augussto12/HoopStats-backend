@@ -149,8 +149,6 @@ export const runBestPlayersCron = async () => {
         await client.query("COMMIT");
         client.release();
 
-        console.log("✨ Best players guardados para", date);
-
     } catch (err) {
         console.error("❌ Error en Best Players CRON:", err);
     }
