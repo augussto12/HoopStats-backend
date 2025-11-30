@@ -293,9 +293,11 @@ export const getTradesToday = async (req: any, res: any) => {
     try {
         const userId = req.user.userId;
 
-        // Obtener el equipo
+        // Obtener el equipo CON trades_remaining
         const teamRes = await pool.query(
-            `SELECT id FROM hoopstats.fantasy_teams WHERE user_id = $1`,
+            `SELECT id, trades_remaining
+             FROM hoopstats.fantasy_teams
+             WHERE user_id = $1`,
             [userId]
         );
 
@@ -303,25 +305,15 @@ export const getTradesToday = async (req: any, res: any) => {
             return res.status(400).json({ error: "No tenés equipo todavía" });
         }
 
-        const teamId = teamRes.rows[0].id;
+        const team = teamRes.rows[0];
 
-        // Contar trades HOY
-        const tradesRes = await pool.query(
-            `SELECT COUNT(*) AS total
-             FROM hoopstats.fantasy_trades
-             WHERE fantasy_team_id = $1
-             AND created_at::date = CURRENT_DATE`,
-            [teamId]
-        );
-
-        const tradesHoy = Number(tradesRes.rows[0].total);
-        const tradesRestantes = Math.max(0, 2 - tradesHoy);
+        const limiteDiario = 2;
 
         return res.json({
-            teamId,
-            tradesHoy,
-            tradesRestantes,
-            limiteDiario: 2
+            teamId: team.id,
+            tradesHoy: limiteDiario - team.trades_remaining,
+            tradesRestantes: team.trades_remaining,
+            limiteDiario
         });
 
     } catch (err) {
@@ -329,6 +321,7 @@ export const getTradesToday = async (req: any, res: any) => {
         return res.status(500).json({ error: "Error al obtener trades de hoy" });
     }
 };
+
 
 export const getMyTransactions = async (req: any, res: any) => {
     try {
@@ -371,9 +364,13 @@ export const getMyTransactions = async (req: any, res: any) => {
 
 
 export const applyTrades = async (req: any, res: any) => {
+    console.log("=== APPLY TRADES START ===");
+
     try {
-        // 🚫 Chequear Market Lock
-        if (await isMarketLocked()) {
+        const locked = await isMarketLocked();
+        console.log("Market locked?", locked);
+
+        if (locked) {
             return res.status(403).json({
                 error: "El mercado está bloqueado. Intentá mañana a las 07:00 AM."
             });
@@ -382,11 +379,15 @@ export const applyTrades = async (req: any, res: any) => {
         const userId = req.user.userId;
         const { add = [], drop = [] } = req.body;
 
+        console.log("User:", userId, "Add:", add, "Drop:", drop);
+
         const client = await pool.connect();
 
         try {
             const teamRes = await client.query(
-                `SELECT id, budget FROM hoopstats.fantasy_teams WHERE user_id = $1`,
+                `SELECT id, budget, trades_remaining
+                 FROM hoopstats.fantasy_teams
+                 WHERE user_id = $1`,
                 [userId]
             );
 
@@ -395,37 +396,33 @@ export const applyTrades = async (req: any, res: any) => {
                 return res.status(400).json({ error: "No tenés equipo creado" });
             }
 
-            const team = teamRes.rows[0];
+            const team = {
+                ...teamRes.rows[0],
+                budget: Number(teamRes.rows[0].budget),
+                trades_remaining: Number(teamRes.rows[0].trades_remaining),
+            };
 
-            // Límite diario
-            const todayRes = await client.query(
-                `SELECT COUNT(*) AS total
-                 FROM hoopstats.fantasy_trades
-                 WHERE fantasy_team_id = $1
-                   AND created_at::date = CURRENT_DATE`,
-                [team.id]
-            );
+            console.log("Team loaded:", team);
 
-            const usadosHoy = Number(todayRes.rows[0].total);
-            const nuevosTrades = add.length + drop.length;
+            const nuevosTrades = Math.max(add.length, drop.length);
 
-            if (usadosHoy + nuevosTrades > 2) {
+            if (nuevosTrades === 0) {
                 client.release();
-                return res.status(400).json({ error: "Te pasás del límite diario de 2 trades" });
+                return res.status(400).json({ error: "No hay cambios para aplicar." });
+            }
+
+            if (team.trades_remaining < nuevosTrades) {
+                client.release();
+                return res.status(400).json({ error: "No te quedan trades disponibles hoy." });
             }
 
             await client.query("BEGIN");
 
             const movementTime = new Date();
 
-            const leaguesRes = await client.query(
-                `SELECT league_id
-                 FROM hoopstats.fantasy_league_teams
-                 WHERE fantasy_team_id = $1`,
-                [team.id]
-            );
-
-            // DROPS
+            // ============================
+            //           DROPS
+            // ============================
             for (const playerId of drop) {
                 const delRes = await client.query(
                     `DELETE FROM hoopstats.fantasy_players
@@ -435,7 +432,7 @@ export const applyTrades = async (req: any, res: any) => {
                 );
 
                 if (delRes.rows.length > 0) {
-                    const price = delRes.rows[0].price;
+                    const price = Number(delRes.rows[0].price);
 
                     await client.query(
                         `UPDATE hoopstats.fantasy_teams
@@ -444,27 +441,21 @@ export const applyTrades = async (req: any, res: any) => {
                         [price, team.id]
                     );
 
-                    for (const row of leaguesRes.rows) {
-                        await client.query(
-                            `INSERT INTO hoopstats.fantasy_trades
-                             (fantasy_team_id, player_id, action, created_at, league_id)
-                             VALUES ($1, $2, 'drop', $3, $4)`,
-                            [team.id, playerId, movementTime, row.league_id]
-                        );
-                    }
+                    team.budget += price;
 
-                    if (leaguesRes.rows.length === 0) {
-                        await client.query(
-                            `INSERT INTO hoopstats.fantasy_trades
-                             (fantasy_team_id, player_id, action, created_at, league_id)
-                             VALUES ($1, $2, 'drop', $3, NULL)`,
-                            [team.id, playerId, movementTime]
-                        );
-                    }
+                    // INSERTAR TRADE GLOBAL
+                    await client.query(
+                        `INSERT INTO hoopstats.fantasy_trades
+                         (fantasy_team_id, player_id, action, created_at)
+                         VALUES ($1, $2, 'drop', $3)`,
+                        [team.id, playerId, movementTime]
+                    );
                 }
             }
 
-            // ADDS
+            // ============================
+            //            ADDS
+            // ============================
             for (const playerId of add) {
                 const pRes = await client.query(
                     `SELECT price FROM hoopstats.players WHERE id = $1`,
@@ -486,7 +477,6 @@ export const applyTrades = async (req: any, res: any) => {
                     [team.id, playerId, price]
                 );
 
-                // actualizar budget (para siguientes adds)
                 team.budget -= price;
 
                 await client.query(
@@ -496,74 +486,47 @@ export const applyTrades = async (req: any, res: any) => {
                     [team.budget, team.id]
                 );
 
-                for (const row of leaguesRes.rows) {
-                    await client.query(
-                        `INSERT INTO hoopstats.fantasy_trades
-                         (fantasy_team_id, player_id, action, created_at, league_id)
-                         VALUES ($1, $2, 'add', $3, $4)`,
-                        [team.id, playerId, movementTime, row.league_id]
-                    );
-                }
-
-                if (leaguesRes.rows.length === 0) {
-                    await client.query(
-                        `INSERT INTO hoopstats.fantasy_trades
-                         (fantasy_team_id, player_id, action, created_at, league_id)
-                         VALUES ($1, $2, 'add', $3, NULL)`,
-                        [team.id, playerId, movementTime]
-                    );
-                }
+                // INSERTAR TRADE GLOBAL
+                await client.query(
+                    `INSERT INTO hoopstats.fantasy_trades
+                     (fantasy_team_id, player_id, action, created_at)
+                     VALUES ($1, $2, 'add', $3)`,
+                    [team.id, playerId, movementTime]
+                );
             }
+
+            // ============================
+            //   UPDATE trades_remaining
+            // ============================
+            await client.query(
+                `UPDATE hoopstats.fantasy_teams
+                 SET trades_remaining = trades_remaining - $1
+                 WHERE id = $2`,
+                [nuevosTrades, team.id]
+            );
 
             await client.query("COMMIT");
             client.release();
 
             return res.json({
                 message: "Cambios aplicados correctamente",
-                movementTime
+                movementTime,
             });
 
         } catch (error) {
+            console.log("⛔ APPLY TRADES ERROR:", error);
+
             await client.query("ROLLBACK");
             client.release();
-            return res.status(400).json({ error: "Error al hacer la transacción." });
+
+            return res.status(400).json({
+                error: "Error al hacer la transacción.",
+            });
         }
 
     } catch (err) {
-        console.error(err);
+        console.log("⛔ APPLY TRADES ROOT ERROR:", err);
+
         return res.status(500).json({ error: "Error inesperado" });
-    }
-};
-
-
-
-export const getGroupedTransactionsByTeam = async (req: any, res: any) => {
-    try {
-        const teamId = parseInt(req.params.teamId);
-
-        const grouped = await pool.query(
-            `
-            SELECT
-                t.created_at AS timestamp,
-                ft.name AS team_name,
-                u.username AS user_name,
-                ARRAY_AGG(p.full_name ORDER BY p.full_name) FILTER (WHERE t.action = 'add') AS entran,
-                ARRAY_AGG(p.full_name ORDER BY p.full_name) FILTER (WHERE t.action = 'drop') AS salen
-            FROM hoopstats.fantasy_trades t
-            JOIN hoopstats.players p ON p.id = t.player_id
-            JOIN hoopstats.fantasy_teams ft ON ft.id = t.fantasy_team_id
-            JOIN hoopstats.users u ON u.id = ft.user_id
-            WHERE t.fantasy_team_id = $1
-            GROUP BY t.created_at, ft.name, u.username
-            ORDER BY t.created_at DESC
-            `,
-            [teamId]
-        );
-
-        return res.json(grouped.rows);
-
-    } catch (err) {
-        console.error("Error:", err);
-        return res.status(500).json({ error: "Error al agrupar trades" });
     }
 };

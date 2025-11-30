@@ -10,7 +10,6 @@ import {
   getTradesToday,
   getMyTransactions,
   applyTrades,
-  getGroupedTransactionsByTeam
 } from "../controllers/fantasyController";
 
 const router = Router();
@@ -28,7 +27,7 @@ router.delete("/remove-player/:playerId", auth, removePlayer);
 router.post("/apply-trades", auth, applyTrades);
 router.get("/trades/today", auth, getTradesToday);
 router.get("/trades/history", auth, getMyTransactions); 
-router.get("/trades/history-by-team", auth, getGroupedTransactionsByTeam);
+
 //   RANKING GLOBAL
 router.get("/ranking", getRanking);
 

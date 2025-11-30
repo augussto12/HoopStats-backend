@@ -175,116 +175,71 @@ export const updateLeague = async (req: any, res: any) => {
     }
 };
 
-
-// ================================================================
-//                      MIS LIGAS
-// ================================================================
 export const getMyLeagues = async (req: any, res: any) => {
     try {
         const userId = req.user.userId;
 
-        // 1) Ligas del usuario
-        const leaguesRes = await pool.query(
-            `
+        const leaguesRes = await pool.query(`
             SELECT 
-                fl.*,
+                fl.id AS league_id,
+                fl.name AS league_name,
+                fl.description,
+                fl.privacy,
+                fl.max_teams,
+                fl.created_at,
+
                 flt.is_admin,
                 flt.points AS my_points,
-                flt.status_id AS my_status_id,
                 sl.code AS my_status,
                 sl.description AS my_status_desc,
                 flt.joined_at,
+
                 ft.id AS my_team_id,
-                ft.name AS my_team_name
+                ft.name AS my_team_name,
+
+                (
+                    SELECT COUNT(*) + 1
+                    FROM hoopstats.fantasy_league_teams flt2
+                    WHERE flt2.league_id = fl.id
+                    AND flt2.points > flt.points
+                ) AS my_position
+
             FROM hoopstats.fantasy_league_teams flt
             JOIN hoopstats.fantasy_leagues fl ON fl.id = flt.league_id
             JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
             JOIN hoopstats.fantasy_league_statuses sl ON sl.id = flt.status_id
             WHERE ft.user_id = $1
             ORDER BY fl.created_at DESC
-            `,
-            [userId]
-        );
+        `, [userId]);
 
-        const leagues = leaguesRes.rows;
-        const response = [];
-
-        for (const league of leagues) {
-            const leagueId = league.id;
-
-            // 2) Equipos dentro de la liga
-            const teamsRes = await pool.query(
-                `
-                SELECT 
-                    ft.id AS team_id,
-                    ft.name AS team_name,
-                    u.id AS user_id,
-                    u.username AS owner,
-                    flt.points,
-                    sl.code AS status,
-                    sl.description AS status_desc,
-                    flt.is_admin
-                FROM hoopstats.fantasy_league_teams flt
-                JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
-                JOIN hoopstats.users u ON u.id = ft.user_id
-                JOIN hoopstats.fantasy_league_statuses sl ON sl.id = flt.status_id
-                WHERE flt.league_id = $1
-                ORDER BY flt.points DESC
-                `,
-                [leagueId]
-            );
-
-            // 3) Últimos trades
-            const tradesRes = await pool.query(
-                `
-                SELECT 
-                    t.id,
-                    t.player_id,
-                    t.action,
-                    t.created_at,
-                    ft.name AS team_name,
-                    u.username AS owner
-                FROM hoopstats.fantasy_trades t
-                JOIN hoopstats.fantasy_teams ft ON ft.id = t.fantasy_team_id
-                JOIN hoopstats.users u ON u.id = ft.user_id
-                WHERE t.league_id = $1
-                ORDER BY t.created_at DESC
-                LIMIT 10
-                `,
-                [leagueId]
-            );
-
-            response.push({
-                league: {
-                    id: league.id,
-                    name: league.name,
-                    description: league.description,
-                    privacy: league.privacy,
-                    status: league.status,
-                    max_teams: league.max_teams,
-                    created_at: league.created_at
-                },
-                me: {
-                    team_id: league.my_team_id,
-                    team_name: league.my_team_name,
-                    is_admin: league.is_admin,
-                    points: league.my_points,
-                    status: league.my_status,
-                    status_desc: league.my_status_desc,
-                    joined_at: league.joined_at
-                },
-                teams: teamsRes.rows,
-                recent_trades: tradesRes.rows
-            });
-        }
+        const response = leaguesRes.rows.map(league => ({
+            id: league.league_id,
+            name: league.league_name,
+            description: league.description,
+            privacy: league.privacy,
+            max_teams: league.max_teams,
+            created_at: league.created_at,
+            my_team: {
+                id: league.my_team_id,
+                name: league.my_team_name,
+                is_admin: league.is_admin,
+                points: league.my_points,
+                status: league.my_status,
+                status_desc: league.my_status_desc,
+                joined_at: league.joined_at,
+                position: league.my_position
+            }
+        }));
 
         return res.json(response);
 
     } catch (err) {
-        console.error("Error fetching leagues:", err);
+        console.error("⛔ Error fetching leagues:", err);
         return res.status(500).json({ error: "Error al obtener ligas" });
     }
 };
+
+
 
 
 // ================================================================
@@ -641,7 +596,7 @@ export const getLeaguesWhereImAdmin = async (req: any, res: any) => {
             JOIN hoopstats.users u ON u.id = ft.user_id
             JOIN hoopstats.fantasy_league_statuses sl ON sl.id = flt.status_id
             WHERE flt.league_id = $1
-            AND sl.code IN ('active', 'pending') 
+            AND sl.code IN ('active', 'pending', 'inactive') 
             `,
                 [leagueId]
             );
@@ -875,28 +830,73 @@ export const isMemberOfLeague = async (req: any, res: any) => {
 };
 
 export const leaveLeague = async (req: any, res: any) => {
+    const client = await pool.connect();
+
     try {
         const userId = req.user.userId;
         const leagueId = parseInt(req.params.leagueId);
 
-        // No dejar salir al creador
-        const league = await pool.query(
-            `SELECT created_by, name FROM hoopstats.fantasy_leagues WHERE id = $1`,
+        await client.query("BEGIN");
+
+        // Verificar liga y creador
+        const leagueRes = await client.query(
+            `SELECT created_by, name 
+             FROM hoopstats.fantasy_leagues 
+             WHERE id = $1`,
             [leagueId]
         );
 
-        if (league.rows.length === 0) {
+        if (leagueRes.rows.length === 0) {
+            await client.query("ROLLBACK");
             return res.status(404).json({ error: "Liga no encontrada" });
         }
 
-        if (league.rows[0].created_by === userId) {
+        const league = leagueRes.rows[0];
+
+        if (league.created_by === userId) {
+            await client.query("ROLLBACK");
             return res.status(403).json({
                 error: "El creador no puede abandonar la liga"
             });
         }
 
-        // Eliminar membresía
-        const deleteRes = await pool.query(
+        // Obtener ID del fantasy_team del usuario dentro de la liga
+        const teamRes = await client.query(
+            `
+            SELECT flt.fantasy_team_id
+            FROM hoopstats.fantasy_league_teams flt
+            JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
+            WHERE flt.league_id = $1 AND ft.user_id = $2
+            `,
+            [leagueId, userId]
+        );
+
+        if (teamRes.rows.length === 0) {
+            await client.query("ROLLBACK");
+            return res.status(404).json({ error: "No sos miembro de la liga" });
+        }
+
+        // Eliminar invitaciones pendientes del usuario en esa liga
+        await client.query(
+            `
+            DELETE FROM hoopstats.fantasy_league_invites
+            WHERE league_id = $1 AND invited_user_id = $2
+            `,
+            [leagueId, userId]
+        );
+
+        //  Eliminar notificaciones relacionadas
+        await client.query(
+            `
+            DELETE FROM hoopstats.notifications
+            WHERE data->>'leagueId' = $1::text 
+            AND user_id = $2
+            `,
+            [leagueId.toString(), userId]
+        );
+
+        // 6️Eliminar su participación en la liga
+        const deleteRes = await client.query(
             `
             DELETE FROM hoopstats.fantasy_league_teams flt
             USING hoopstats.fantasy_teams ft
@@ -909,15 +909,200 @@ export const leaveLeague = async (req: any, res: any) => {
         );
 
         if (deleteRes.rows.length === 0) {
-            return res.status(404).json({
-                error: "No sos miembro de la liga"
+            await client.query("ROLLBACK");
+            return res.status(404).json({ error: "No sos miembro de la liga" });
+        }
+
+        // Obtener username del usuario que abandona
+        const userRes = await client.query(
+            `SELECT username FROM hoopstats.users WHERE id = $1`,
+            [userId]
+        );
+        const username = userRes.rows[0]?.username || "Un usuario";
+
+        // Obtener todos los admins de la liga (excepto el que se va)
+        const adminsRes = await client.query(
+            `
+            SELECT ft.user_id
+            FROM hoopstats.fantasy_league_teams flt
+            JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
+            WHERE flt.league_id = $1 
+            AND flt.is_admin = true
+            AND ft.user_id != $2
+            `,
+            [leagueId, userId]
+        );
+
+        for (const admin of adminsRes.rows) {
+            await createNotification(
+                admin.user_id,
+                "member_left",
+                "Un usuario abandonó tu liga",
+                `${username} abandonó la liga "${league.name}".`,
+                { leagueId }
+            );
+        }
+
+
+
+        await client.query("COMMIT");
+
+        return res.json({ message: "Abandonaste la liga correctamente y se eliminaron todos tus datos" });
+
+    } catch (err) {
+        await client.query("ROLLBACK");
+        console.error("Error leaveLeague:", err);
+        return res.status(500).json({ error: "Error al abandonar liga" });
+    } finally {
+        client.release();
+    }
+};
+
+
+export const deleteLeague = async (req: any, res: any) => {
+    const client = await pool.connect();
+
+    try {
+        const userId = req.user.userId;
+        const leagueId = parseInt(req.params.leagueId);
+
+        await client.query("BEGIN");
+
+        // Verificar liga y creador
+        const leagueRes = await client.query(
+            `SELECT created_by, name
+             FROM hoopstats.fantasy_leagues
+             WHERE id = $1`,
+            [leagueId]
+        );
+
+        if (leagueRes.rows.length === 0) {
+            await client.query("ROLLBACK");
+            return res.status(404).json({ error: "Liga no encontrada" });
+        }
+
+        const league = leagueRes.rows[0];
+
+        if (league.created_by !== userId) {
+            await client.query("ROLLBACK");
+            return res.status(403).json({
+                error: "Sólo el creador de la liga puede eliminarla"
             });
         }
 
-        return res.json({ message: "Abandonaste la liga correctamente" });
+        // Eliminar invitaciones relacionadas
+        await client.query(
+            `
+            DELETE FROM hoopstats.fantasy_league_invites
+            WHERE league_id = $1
+            `,
+            [leagueId]
+        );
+
+        // Eliminar notificaciones relacionadas a esta liga
+        await client.query(
+            `
+            DELETE FROM hoopstats.notifications
+            WHERE data->>'leagueId' = $1::text
+            `,
+            [leagueId.toString()]
+        );
+
+        // Eliminar relaciones fantasy_team <-> liga
+        await client.query(
+            `
+            DELETE FROM hoopstats.fantasy_league_teams
+            WHERE league_id = $1
+            `,
+            [leagueId]
+        );
+
+        // Eliminar liga finalmente
+        await client.query(
+            `
+            DELETE FROM hoopstats.fantasy_leagues
+            WHERE id = $1
+            `,
+            [leagueId]
+        );
+
+        // Obtener todos los usuarios de la liga
+        const membersRes = await client.query(`
+            SELECT u.id AS user_id
+            FROM hoopstats.fantasy_league_teams flt
+            JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
+            JOIN hoopstats.users u ON u.id = ft.user_id
+            WHERE flt.league_id = $1
+        `, [leagueId]);
+
+        for (const m of membersRes.rows) {
+            await createNotification(
+                m.user_id,
+                "league_deleted",
+                "Una liga fue eliminada",
+                `La liga "${league.name}" fue eliminada por el creador.`,
+                { leagueId }
+            );
+        }
+
+
+        await client.query("COMMIT");
+
+        return res.json({
+            message: `La liga "${league.name}" fue eliminada correctamente`
+        });
 
     } catch (err) {
-        console.error("Error leaveLeague:", err);
-        return res.status(500).json({ error: "Error al abandonar liga" });
+        await client.query("ROLLBACK");
+        console.error("Error deleteLeague:", err);
+        return res.status(500).json({ error: "Error al eliminar liga" });
+    } finally {
+        client.release();
+    }
+};
+
+
+export const activateMember = async (req: any, res: any) => {
+    try {
+        const adminId = req.user.userId;
+        const leagueId = parseInt(req.params.leagueId);
+        const userId = parseInt(req.params.userId);
+
+        // Verificar que quien activa es admin
+        const check = await pool.query(`
+            SELECT 1
+            FROM hoopstats.fantasy_league_teams flt
+            JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
+            WHERE flt.league_id = $1 
+              AND flt.is_admin = true 
+              AND ft.user_id = $2
+        `, [leagueId, adminId]);
+
+        if (check.rows.length === 0) {
+            return res.status(403).json({ error: "No sos admin de esta liga" });
+        }
+
+        const activeStatusId = await getStatusId("membership", "active");
+
+        // Activar usuario
+        const result = await pool.query(`
+            UPDATE hoopstats.fantasy_league_teams flt
+            SET status_id = $1
+            FROM hoopstats.fantasy_teams ft
+            WHERE flt.fantasy_team_id = ft.id
+              AND ft.user_id = $2
+              AND flt.league_id = $3
+            RETURNING flt.fantasy_team_id
+        `, [activeStatusId, userId, leagueId]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: "El usuario no pertenece a esta liga" });
+        }
+
+        return res.json({ message: "Miembro activado correctamente" });
+
+    } catch (err) {
+        console.error("Error activating member:", err);
+        return res.status(500).json({ error: "Error al activar usuario" });
     }
 };

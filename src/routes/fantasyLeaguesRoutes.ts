@@ -16,7 +16,9 @@ import {
     getLeaguesWhereImAdmin,
     getLeagueDetails,
     isMemberOfLeague,
-    leaveLeague
+    leaveLeague,
+    deleteLeague,
+    activateMember
 } from "../controllers/fantasyLeaguesController";
 
 const router = Router();
@@ -26,6 +28,7 @@ const router = Router();
 // ─────────────────────────────
 router.post("/", auth, createLeague);
 router.put("/:leagueId", auth, updateLeague);
+router.delete("/:leagueId", auth, deleteLeague);
 
 // ─────────────────────────────
 //         ESTADO E INFO
@@ -36,13 +39,14 @@ router.get("/my-created-leagues", auth, getMyCreatedLeagues);
 router.get("/admin-leagues", auth, getLeaguesWhereImAdmin);
 router.get("/league-details/:leagueId", auth, getLeagueDetails);
 router.get("/membership/is-member/:leagueId", auth, isMemberOfLeague);
-router.post("/membership/leagues/:leagueId/leave", auth, leaveLeague);
+router.post("/leagues/:leagueId/leave", auth, leaveLeague);
 
 // ─────────────────────────────
 //      ADMINISTRACIÓN LIGA
 // ─────────────────────────────
 router.post("/:leagueId/transfer-admin", auth, transferAdmin);
 router.patch("/:leagueId/members/:userId/inactivate", auth, inactivateMember);
+router.patch("/:leagueId/members/:userId/activate", auth, activateMember);
 router.delete("/:leagueId/members/:userId", auth, deleteMember);
 
 // ─────────────────────────────

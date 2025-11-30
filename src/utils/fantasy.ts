@@ -1,15 +1,49 @@
 import { pool } from "../db";
 
 export function calcFantasyPoints(s: any): number {
-    return (
-        (s.points ?? 0) * 1 +
-        (s.totReb ?? 0) * 1.2 +
+
+    // ----------------------------
+    // 1) Cálculo base
+    // ----------------------------
+    let points =
+        (s.points ?? 0) * 1.0 +
+        (s.totReb ?? 0) * 1.25 +
         (s.assists ?? 0) * 1.5 +
-        (s.blocks ?? 0) * 3 +
         (s.steals ?? 0) * 3 +
-        (s.turnovers ?? 0) * -2
-    );
+        (s.blocks ?? 0) * 3 +
+        (s.turnovers ?? 0) * -1 +
+        (s.fgm ?? 0) * 1 +
+        ((s.fga ?? 0) - (s.fgm ?? 0)) * -0.5 +
+        (s.ftm ?? 0) * 0.5 +
+        ((s.fta ?? 0) - (s.ftm ?? 0)) * -0.25 +
+        (s.tpm ?? 0) * 0.5 +
+        (s.plusMinus ? Number(s.plusMinus) * 0.1 : 0);
+
+    // ----------------------------
+    // 2) Double/Triple Double
+    // ----------------------------
+    const categories = [
+        s.points ?? 0,
+        s.totReb ?? 0,
+        s.assists ?? 0,
+        s.steals ?? 0,
+        s.blocks ?? 0
+    ];
+
+    const count10s = categories.filter(v => v >= 10).length;
+
+    if (count10s >= 3) {
+        // Triple double
+        points += 8;
+    } else if (count10s >= 2) {
+        // Double double
+        points += 5;
+    }
+
+    return Number(points.toFixed(2));
 }
+
+
 
 // Chequear si jugó más de 1 minuto
 export function playedMoreThanOneMinute(s: any): boolean {

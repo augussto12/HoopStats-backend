@@ -2,13 +2,19 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import slowDown from "express-slow-down";
 import sanitizeHtml from "sanitize-html";
+import express, { Request, Response, NextFunction } from "express";
 
 export const configureSecurity = (app: any) => {
 
-    // 1) HELMET
-    app.use(helmet({
-        crossOriginResourcePolicy: false,
-    }));
+    /* =============================
+       0) JSON LIMIT (Anti-DoS)
+    ============================== */
+    app.use(express.json({ limit: "200kb" }));
+
+    /* =============================
+       1) HELMET
+    ============================== */
+    app.use(helmet({ crossOriginResourcePolicy: false }));
 
     app.use(
         helmet.contentSecurityPolicy({
@@ -19,7 +25,7 @@ export const configureSecurity = (app: any) => {
                 imgSrc: ["'self'", "data:", "blob:", "https:"],
                 connectSrc: [
                     "'self'",
-                    "https://v2.nba.api-sports.io",  // tu API externa
+                    "https://v2.nba.api-sports.io",
                     "https://hoopstats.com.ar"
                 ],
                 fontSrc: ["'self'", "https:", "data:"],
@@ -30,11 +36,12 @@ export const configureSecurity = (app: any) => {
         })
     );
 
-
     app.disable("x-powered-by");
 
-    // 2) HEADERS EXTRA DE SEGURIDAD
-    app.use((req: any, res: any, next: any) => {
+    /* =============================
+       2) HEADERS EXTRA
+    ============================== */
+    app.use((_req: Request, res: Response, next: NextFunction) => {
         res.setHeader("X-Frame-Options", "DENY");
         res.setHeader("X-Content-Type-Options", "nosniff");
         res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
@@ -45,28 +52,60 @@ export const configureSecurity = (app: any) => {
         next();
     });
 
-    // 3) SANITIZACIÓN XSS
-    app.use((req: any, res: any, next: any) => {
-        const sanitizeValue = (value: any) => {
-            if (typeof value === "string") {
-                return sanitizeHtml(value, {
-                    allowedTags: [],
-                    allowedAttributes: {}
-                });
-            }
-            return value;
-        };
-
-        if (req.body) {
-            for (const key in req.body) {
-                req.body[key] = sanitizeValue(req.body[key]);
-            }
+    /* =============================
+       3) BLOQUEAR UPLOADS
+    ============================== */
+    app.use((req: Request, res: Response, next: NextFunction) => {
+        if (req.headers["content-type"]?.includes("multipart/form-data")) {
+            return res.status(400).json({ error: "Uploads no permitidos." });
         }
+        next();
+    });
+
+    /* =============================
+       4) BLOQUEAR MÉTODOS RAROS
+    ============================== */
+    app.use((req: Request, res: Response, next: NextFunction) => {
+        const forbidden = ["TRACE", "TRACK", "CONNECT"];
+        if (forbidden.includes(req.method)) {
+            return res.status(405).send("Método no permitido");
+        }
+        next();
+    });
+
+    /* =============================
+       5) SANITIZACIÓN XSS COMPLETA
+    ============================== */
+    const sanitizeValue = (value: any) => {
+        if (typeof value === "string") {
+            return sanitizeHtml(value, {
+                allowedTags: [],
+                allowedAttributes: {}
+            });
+        }
+        return value;
+    };
+
+    app.use((req: Request, _res: Response, next: NextFunction) => {
+        if (req.body)
+            for (const k in req.body)
+                req.body[k] = sanitizeValue(req.body[k]);
+
+        if (req.query)
+            for (const k in req.query)
+                req.query[k] = sanitizeValue(req.query[k]);
+
+        if (req.params)
+            for (const k in req.params)
+                req.params[k] = sanitizeValue(req.params[k]);
 
         next();
     });
 
-    // 4) Rate limit GLOBAL
+    /* =============================
+       6) RATE LIMITS
+    ============================== */
+
     app.use(rateLimit({
         windowMs: 15 * 60 * 1000,
         max: 200,
@@ -74,18 +113,36 @@ export const configureSecurity = (app: any) => {
         legacyHeaders: false
     }));
 
-    // 5) Rate limit AUTH
     app.use("/api/auth", rateLimit({
         windowMs: 10 * 60 * 1000,
         max: 30
     }));
 
-    // 6) Slowdown LOGIN
     app.use("/api/auth/login", slowDown({
         windowMs: 10 * 60 * 1000,
         delayAfter: 5,
         delayMs: () => 1000,
         validate: { delayMs: false }
     }));
-};
 
+    /* =============================
+       7) SLOWDOWN SUAVE
+    ============================== */
+    app.use(slowDown({
+        windowMs: 10 * 60 * 1000,
+        delayAfter: 120,
+        delayMs: () => 300,
+        validate: { delayMs: false }
+    }));
+
+    /* =============================
+       8) AUDITORÍA SIMPLE
+    ============================== */
+    app.use((req: Request, _res: Response, next: NextFunction) => {
+        const size = JSON.stringify(req.body || "").length;
+        if (size > 100000) {
+            console.warn("⚠️ Request sospechoso desde:", req.ip);
+        }
+        next();
+    });
+};

@@ -50,6 +50,13 @@ export const runFantasyCron = async () => {
         const finishedGames = [...gamesYesterday, ...gamesToday]
             .filter(g => g.status.long === "Finished");
 
+        if (finishedGames.length > 0) {
+            await pool.query(`
+                UPDATE hoopstats.fantasy_teams
+                SET trades_remaining = 2
+            `);
+        }
+
         console.log(`Total partidos finalizados (ayer + hoy): ${finishedGames.length}`);
 
         if (finishedGames.length === 0) return;

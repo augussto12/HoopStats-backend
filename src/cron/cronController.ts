@@ -19,9 +19,9 @@ export const runAllCrons = async (req: any, res: any) => {
         return res.json({
             message: "Todos los crons ejecutados correctamente",
             dailyGames,
-            //fantasy: fantasyResult,
-            //predictions: predictionResult,
-            //bestPlayers: bestPlayersResult,
+            fantasy: fantasyResult,
+            predictions: predictionResult,
+            bestPlayers: bestPlayersResult,
             marketLock: marketLockResult,
         });
 

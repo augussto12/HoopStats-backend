@@ -16,12 +16,8 @@ function toYYYYMMDD(d: Date) {
 
 export const runMarketLockCron = async () => {
     try {
-
         const todayARG = toYYYYMMDD(getARGDate());
 
-        // ============================================
-        // 1) Traemos los partidos guardados del día
-        // ============================================
         const games = await pool.query(
             `SELECT * FROM hoopstats.nba_games_daily
              WHERE date_arg = $1
@@ -31,42 +27,38 @@ export const runMarketLockCron = async () => {
 
         const rows = games.rows;
 
-        let lockStart: Date;
+        const filtered = rows.filter(g => {
+            const start = getARGDate(new Date(g.start_time));
+            return start.getHours() >= 7;
+        });
 
-        // ============================================
-        // 2) Caso: NO hay partidos hoy
-        // ============================================
-        if (rows.length === 0) {
+        let lockStart: Date;
+        let noGamesToday = false;
+
+        if (filtered.length === 0) {
+
+            // Día sin partidos
+            noGamesToday = true;
 
             lockStart = getARGDate();
             lockStart.setHours(7, 0, 0, 0);
 
         } else {
-            // ============================================
-            // 3) Tomar el PRIMER partido del día
-            // ============================================
-            const firstGame = rows[0];
-            const firstStart = new Date(firstGame.start_time);
-            // Lock 30 minutos antes
+            const firstGame = filtered[0];
+            const firstStart = getARGDate(new Date(firstGame.start_time));
+
             lockStart = new Date(firstStart.getTime() - 30 * 60 * 1000);
         }
 
-        // ============================================
-        // 4) Lock end → mañana 07:00 AM
-        // ============================================
         const lockEnd = new Date(lockStart);
         lockEnd.setDate(lockStart.getDate() + 1);
         lockEnd.setHours(7, 0, 0, 0);
 
-        // ============================================
-        // 5) Guardar en DB
-        // ============================================
         await pool.query(
-            `INSERT INTO hoopstats.market_lock (lock_start, lock_end)
-             VALUES ($1, $2)`,
-            [lockStart, lockEnd]
+            `INSERT INTO hoopstats.market_lock (lock_start, lock_end, no_games_today)
+             VALUES ($1, $2, $3)`,
+            [lockStart, lockEnd, noGamesToday]
         );
-
 
     } catch (err) {
         console.error("Error en MarketLockCron:", err);

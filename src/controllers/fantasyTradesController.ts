@@ -34,6 +34,7 @@ export const getGroupedTradesByTeam = async (req: any, res: any) => {
     }
 };
 
+
 // ================================================================
 //           TRADES COMBINADOS - POR LIGA
 // ================================================================
@@ -47,13 +48,17 @@ export const getGroupedTradesByLeague = async (req: any, res: any) => {
                 t.created_at AS timestamp,
                 ft.name AS team_name,
                 u.username AS user_name,
-                ARRAY_AGG(p.full_name ORDER BY p.full_name) FILTER (WHERE t.action = 'add') AS entran,
-                ARRAY_AGG(p.full_name ORDER BY p.full_name) FILTER (WHERE t.action = 'drop') AS salen
+                ARRAY_AGG(p.full_name ORDER BY p.full_name)
+                    FILTER (WHERE t.action = 'add') AS entran,
+                ARRAY_AGG(p.full_name ORDER BY p.full_name)
+                    FILTER (WHERE t.action = 'drop') AS salen
             FROM hoopstats.fantasy_trades t
             JOIN hoopstats.players p ON p.id = t.player_id
             JOIN hoopstats.fantasy_teams ft ON ft.id = t.fantasy_team_id
             JOIN hoopstats.users u ON u.id = ft.user_id
-            WHERE t.league_id = $1
+            JOIN hoopstats.fantasy_league_teams flt
+                ON flt.fantasy_team_id = ft.id
+            WHERE flt.league_id = $1
             GROUP BY t.created_at, ft.name, u.username
             ORDER BY t.created_at DESC
             `,
@@ -67,6 +72,8 @@ export const getGroupedTradesByLeague = async (req: any, res: any) => {
         return res.status(500).json({ error: "Error al obtener trades de la liga" });
     }
 };
+
+
 
 // ================================================================
 //                       MERCADO DE LA LIGA
@@ -83,7 +90,8 @@ export const getLeagueMarket = async (req: any, res: any) => {
                 SUM(CASE WHEN t.action = 'drop' THEN 1 ELSE 0 END) AS total_drops
             FROM hoopstats.fantasy_trades t
             JOIN hoopstats.players p ON p.id = t.player_id
-            WHERE t.league_id = $1
+            JOIN hoopstats.fantasy_league_teams flt ON flt.fantasy_team_id = t.fantasy_team_id
+            WHERE flt.league_id = $1
             GROUP BY p.full_name
             ORDER BY total_adds DESC, total_drops DESC
             LIMIT 100
