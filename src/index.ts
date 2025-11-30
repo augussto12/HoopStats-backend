@@ -23,7 +23,6 @@ import bestPlayersRoutes from "./routes/bestPlayersRoutes";
 import marketLockRoutes from "./routes/marketLockRoutes";
 import marketLockCronRoutes from "./routes/marketLockCronRoutes";
 import gameRoutes from "./routes/gamesRoutes"
-import { configureSecurity } from "./config/security";
 
 dotenv.config();
 
