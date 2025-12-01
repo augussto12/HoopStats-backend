@@ -31,8 +31,7 @@ dotenv.config();
 // ──────────────────────────────────────────
 //                CRON LOCAL
 // ──────────────────────────────────────────
-//cron.schedule("0 10 * * *", async () => {
-cron.schedule("*/5 * * * *", async () => {
+cron.schedule("0 10 * * *", async () => {
 
     console.log("⏱ Ejecutando cron LOCAL del backend (07:00 AR)...");
 

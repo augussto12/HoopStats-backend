@@ -20,11 +20,15 @@ function toYYYYMMDD(d: Date) {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-function addDaysStr(dateISO: string, delta: number) {
-    const d = new Date(dateISO + "T00:00:00");
-    d.setDate(d.getDate() + delta);
-    return toYYYYMMDD(getARGDate(d));
+function addDaysStr(dateISO: string, delta: number): string {
+    const [year, month, day] = dateISO.split("-").map(Number);
+
+    const d = new Date(Date.UTC(year, month - 1, day));
+    d.setUTCDate(d.getUTCDate() + delta);
+
+    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 }
+
 
 async function apiGet(path: string, params: any = {}) {
     const url = `${API_URL}${path}`;
