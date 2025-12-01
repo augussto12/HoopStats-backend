@@ -28,8 +28,24 @@ function addDaysStr(dateISO: string, delta: number) {
 
 async function apiGet(path: string, params: any = {}) {
     const url = `${API_URL}${path}`;
-    const res = await axios.get(url, { headers, params });
-    return res.data.response;
+
+    console.log("🟦 API-GET ->", url, params);
+
+    try {
+        const res = await axios.get(url, { headers, params });
+        console.log("🟩 API OK:", url, "items:", res.data.response?.length ?? 0);
+        return res.data.response;
+    } catch (err: any) {
+        console.error("🟥 API ERROR:", {
+            url,
+            params,
+            message: err.message,
+            code: err.code,
+            status: err.response?.status,
+            data: err.response?.data,
+        });
+        throw err; // MUY IMPORTANTE para que el cron entre al catch de abajo
+    }
 }
 
 function convertUTCtoARG(utc: string) {
@@ -40,26 +56,41 @@ function convertUTCtoARG(utc: string) {
 }
 
 export const runDailyGamesCron = async () => {
-    try {
+    console.log("------------------------------------------------------------");
+    console.log("🏀 Iniciando DailyGamesCron:", new Date().toISOString());
+    console.log("API_URL:", API_URL);
+    console.log("SEASON:", SEASON);
 
+    try {
         const todayARG = toYYYYMMDD(getARGDate());
         const prev = addDaysStr(todayARG, -1);
         const next = addDaysStr(todayARG, +1);
 
+        console.log("📅 FECHAS ARG ->", { prev, todayARG, next });
 
-        // 1) Fetch 3 days (igual que en el front)
+        // 1) Fetch 3 days
+        console.log("🔵 Fetching games for prev/today/next...");
         const [gPrev, gDay, gNext] = await Promise.all([
             apiGet("/games", { date: prev, season: SEASON }),
             apiGet("/games", { date: todayARG, season: SEASON }),
             apiGet("/games", { date: next, season: SEASON }),
         ]);
 
+        console.log("📊 CANTIDADES ->", {
+            prev: gPrev.length,
+            today: gDay.length,
+            next: gNext.length,
+        });
+
         let all = [...gPrev, ...gDay, ...gNext];
 
         // 2) Remove duplicates
+        const before = all.length;
         all = Array.from(new Map(all.map(g => [g.id, g])).values());
+        console.log(`🟨 Duplicados removidos: ${before} -> ${all.length}`);
 
-        // 3) Convert and filter games that actually happen today in Argentina
+        // 3) Convert UTC → ARG
+        console.log("🟦 Filtrando partidos que se juegan HOY en ARG...");
         const mapped = all
             .map((g: any) => ({
                 ...g,
@@ -67,15 +98,19 @@ export const runDailyGamesCron = async () => {
             }))
             .filter(g => toYYYYMMDD(g.argStart) === todayARG);
 
+        console.log("🟩 Partidos HOY:", mapped.length);
 
-        // 4) Clean old data for today
+        // 4) Clean old data
+        console.log("🗑️ Borrando datos anteriores para:", todayARG);
         await pool.query(
             `DELETE FROM hoopstats.nba_games_daily WHERE date_arg = $1`,
             [todayARG]
         );
 
         // 5) Insert new records
+        console.log("💾 Insertando partidos...");
         for (const g of mapped) {
+            console.log(" -> Guardando game:", g.id);
             await pool.query(
                 `INSERT INTO hoopstats.nba_games_daily 
                 (game_id, date_arg, start_time, home_team, away_team, status, raw_json)
@@ -92,8 +127,14 @@ export const runDailyGamesCron = async () => {
             );
         }
 
+        console.log("🏀 DailyGamesCron FINALIZADO");
 
-    } catch (err) {
-        console.error("DailyGamesCron error:", err);
+    } catch (err: any) {
+        console.error("🟥 DailyGamesCron ERROR CRÍTICO:", {
+            message: err.message,
+            code: err.code,
+            status: err.response?.status,
+            data: err.response?.data,
+        });
     }
 };

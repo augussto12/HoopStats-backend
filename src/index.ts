@@ -22,6 +22,7 @@ import favoritesRoutes from "./routes/favoritesRoutes";
 import bestPlayersRoutes from "./routes/bestPlayersRoutes";
 import marketLockRoutes from "./routes/marketLockRoutes";
 import marketLockCronRoutes from "./routes/marketLockCronRoutes";
+import dailyGamesCronRoutes from "./routes/dailyGamesCronRoutes";
 import gameRoutes from "./routes/gamesRoutes"
 
 dotenv.config();
@@ -30,7 +31,9 @@ dotenv.config();
 // ──────────────────────────────────────────
 //                CRON LOCAL
 // ──────────────────────────────────────────
-cron.schedule("0 10 * * *", async () => {
+//cron.schedule("0 10 * * *", async () => {
+cron.schedule("*/5 * * * *", async () => {
+
     console.log("⏱ Ejecutando cron LOCAL del backend (07:00 AR)...");
 
     try {
@@ -100,6 +103,7 @@ app.use("/api/best-players", bestPlayersRoutes);
 
 app.use("/api/market-lock", marketLockRoutes);
 app.use("/api/market-lock-cron", marketLockCronRoutes);
+app.use("/api/daily-games-cron", dailyGamesCronRoutes);
 app.use("/games", gameRoutes);
 app.get("/api/test", (req, res) => res.json({ ok: true }));
 

@@ -11,17 +11,17 @@ export const runAllCrons = async (req: any, res: any) => {
 
     try {
         const dailyGames = await runDailyGamesCron(); 
-        const fantasyResult = await runFantasyCron();
-        const predictionResult = await runPredictionCron();
-        const bestPlayersResult = await runBestPlayersCron(); 
+        //const fantasyResult = await runFantasyCron();
+        //const predictionResult = await runPredictionCron();
+        //const bestPlayersResult = await runBestPlayersCron(); 
         const marketLockResult = await runMarketLockCron(); 
 
         return res.json({
             message: "Todos los crons ejecutados correctamente",
             dailyGames,
-            fantasy: fantasyResult,
-            predictions: predictionResult,
-            bestPlayers: bestPlayersResult,
+            //fantasy: fantasyResult,
+            //predictions: predictionResult,
+            //bestPlayers: bestPlayersResult,
             marketLock: marketLockResult,
         });
 
