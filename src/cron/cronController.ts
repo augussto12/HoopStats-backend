@@ -16,7 +16,7 @@ export const runAllCrons = async (req: Request, res: Response) => {
     const secret = process.env.CRON_SECRET || "";
 
     if (!cronKeyHeader || typeof cronKeyHeader !== "string" || !secret) {
-        console.warn("❌ Intento de cron sin key o sin secret configurado", {
+        console.warn("Intento de cron sin key o sin secret configurado", {
             ip: req.ip,
             ua: req.headers["user-agent"],
         });
@@ -33,7 +33,7 @@ export const runAllCrons = async (req: Request, res: Response) => {
     }
 
     if (!authorized) {
-        console.warn("❌ Cron key inválida", {
+        console.warn("Cron key inválida", {
             ip: req.ip,
             ua: req.headers["user-agent"],
         });

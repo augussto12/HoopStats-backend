@@ -2,6 +2,13 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import cron from "node-cron";
+import { pool } from "./db";
+
+import { runDailyGamesCron } from "./cron/dailyGamesCronController";
+import { runFantasyCron } from "./cron/fantasyCronController";
+import { runPredictionCron } from "./cron/predictionCronController";
+import { runBestPlayersCron } from "./cron/bestPlayersCronController";
+import { runMarketLockCron } from "./cron/marketLockCronController";
 
 import { auth } from "./middlewares/auth";
 import { configureSecurity } from "./config/security";
@@ -9,6 +16,7 @@ import { configureSecurity } from "./config/security";
 import authRoutes from "./routes/authRoutes";
 
 import fantasyRoutes from "./routes/fantasyRoutes";
+import fantasyCronRoutes from "./routes/fantasyCronRoutes";
 import fantasyLeaguesRoutes from "./routes/fantasyLeaguesRoutes";
 import fantasyTradesRoutes from "./routes/fantasyTradesRoutes";
 import leaguesMembershipRoutes from "./routes/leaguesMembershipRoutes";
@@ -16,44 +24,68 @@ import notificationRoutes from "./routes/notificationRoutes";
 import playerRoutes from "./routes/playerRoutes";
 import teamRoutes from "./routes/teamRoutes";
 import predictionRoutes from "./routes/predictionRoutes";
+import predictionCronRoutes from "./routes/predictionCronRoutes";
 import userRoutes from "./routes/usersRoutes";
 import cronRoutes from "./routes/cronRoutes";
 import favoritesRoutes from "./routes/favoritesRoutes";
 import bestPlayersRoutes from "./routes/bestPlayersRoutes";
+import bestPlayersCronRoutes from "./routes/bestPlayersCronRoutes";
 import marketLockRoutes from "./routes/marketLockRoutes";
 import marketLockCronRoutes from "./routes/marketLockCronRoutes";
 import dailyGamesCronRoutes from "./routes/dailyGamesCronRoutes";
 import gameRoutes from "./routes/gamesRoutes"
 import nbaRoutes from "./routes/nbaRoutes"
 import { requireEmailVerified } from "./middlewares/requireEmailVerified";
+import { requireCronKey } from "./middlewares/requireCronKey";
 
 dotenv.config();
 
 
 // ──────────────────────────────────────────
-//                CRON LOCAL
+//                CRON LOCAL (07:00 AR)
 // ──────────────────────────────────────────
-cron.schedule("0 10 * * *", async () => {
+cron.schedule(
+    "0 7 * * *",
+    async () => {
+        const client = await pool.connect();
 
-    console.log("⏱ Ejecutando cron LOCAL del backend (07:00 AR)...");
+        try {
+            // Evita duplicados en múltiples instancias (Railway scale / redeploy)
+            const lock = await client.query(
+                "SELECT pg_try_advisory_lock(900001) AS ok"
+            );
 
-    try {
-        const res = await fetch(
-            "https://hoopstats-backend-production.up.railway.app/api/cron/run-all",
-            {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "x-cron-key": process.env.CRON_SECRET || "",
-                },
+            if (!lock.rows[0].ok) {
+                console.log("🔁 [CRON] Otra instancia ya ejecutó el cron. Skip.");
+                return;
             }
-        );
 
-        console.log("📡 Cron respondió:", res.status);
-    } catch (err) {
-        console.error("❌ Error en cron:", err);
-    }
-});
+            const startedAt = new Date();
+            console.log(
+                "⏱ [CRON] Ejecutando crons (07:00 AR)...",
+                startedAt.toISOString()
+            );
+
+            await runDailyGamesCron();
+            await runFantasyCron();
+            await runPredictionCron();
+            await runBestPlayersCron();
+            await runMarketLockCron();
+
+            console.log("✅ [CRON] Todos los crons terminaron OK.");
+        } catch (err) {
+            console.error("❌ [CRON] Error ejecutando crons:", err);
+        } finally {
+            // Liberar lock SIEMPRE
+            await client.query("SELECT pg_advisory_unlock(900001)");
+            client.release();
+            console.log("🔓 [CRON] Lock liberado.");
+        }
+    },
+    { timezone: "America/Argentina/Buenos_Aires" }
+);
+
+
 
 const app = express();
 
@@ -86,6 +118,7 @@ const PORT = process.env.PORT || 3000;
 app.use("/api/nba", nbaRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/fantasy", auth, requireEmailVerified, fantasyRoutes);
+app.use("/api/fantasy-cron", requireCronKey, fantasyCronRoutes);
 app.use("/api/notifications", auth, notificationRoutes);
 
 app.use("/api/fantasy-leagues", auth, requireEmailVerified, fantasyLeaguesRoutes);
@@ -95,15 +128,17 @@ app.use("/api/fantasy-league-membership", auth, requireEmailVerified, leaguesMem
 app.use("/api/players", playerRoutes);
 app.use("/api/teams", teamRoutes);
 app.use("/api/predictions", auth, requireEmailVerified, predictionRoutes);
+app.use("/api/prediction-cron", requireCronKey, predictionCronRoutes);
 
 app.use("/api/users", userRoutes);
-app.use("/api/cron", cronRoutes);
+app.use("/api/cron", requireCronKey, cronRoutes);
 app.use("/api/favorites", auth, requireEmailVerified, favoritesRoutes);
 app.use("/api/best-players", bestPlayersRoutes);
+app.use("/api/best-players-cron", requireCronKey, bestPlayersCronRoutes);
 
 app.use("/api/market-lock", marketLockRoutes);
-app.use("/api/market-lock-cron", marketLockCronRoutes);
-app.use("/api/daily-games-cron", dailyGamesCronRoutes);
+app.use("/api/market-lock-cron", requireCronKey, marketLockCronRoutes);
+app.use("/api/daily-games-cron", requireCronKey, dailyGamesCronRoutes);
 app.use("/games", gameRoutes);
 app.get("/api/test", (req, res) => res.json({ ok: true }));
 

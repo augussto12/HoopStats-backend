@@ -14,73 +14,87 @@ function toYYYYMMDD(d: Date) {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+function formatARG(d: Date) {
+    return d.toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires" });
+}
+
 export const runMarketLockCron = async () => {
+    console.log("MarketLockCron START");
+
     try {
         const todayARG = toYYYYMMDD(getARGDate());
-        console.log("🏀 MarketLockCron para día ARG:", todayARG);
+        console.log("MarketLockCron para día ARG:", todayARG);
 
         const games = await pool.query(
             `SELECT * FROM hoopstats.nba_games_daily
-             WHERE date_arg = $1
-             ORDER BY start_time ASC`,
+       WHERE date_arg = $1
+       ORDER BY start_time ASC`,
             [todayARG]
         );
 
         const rows = games.rows;
-        console.log("🎮 Partidos cargados en nba_games_daily:", rows.length);
+        console.log("Partidos cargados en nba_games_daily:", rows.length);
 
-        // ✅ SOLO partidos que empiecen a partir de las 07:00 ARG
-        const filtered = rows.filter(g => {
-            const start = getARGDate(new Date(g.start_time));
-            return start.getHours() >= 7;
+        // SOLO partidos que empiecen a partir de las 07:00 ARG
+        const filtered = rows.filter((g: any) => {
+            const startARG = getARGDate(new Date(g.start_time));
+            return startARG.getHours() >= 7;
         });
 
-        console.log("🎯 Partidos después de las 07:00 ARG:", filtered.length);
+        console.log("Partidos después de las 07:00 ARG:", filtered.length);
 
         let lockStart: Date;
         let noGamesToday = false;
 
         if (filtered.length === 0) {
-            // 🔹 No hay partidos “reales” hoy, pero IGUAL guardamos registro
             noGamesToday = true;
 
             lockStart = getARGDate();
             lockStart.setHours(7, 0, 0, 0);
 
-            console.log("📭 No hay partidos después de las 07:00, se marca no_games_today = true");
+            console.log("No hay partidos después de las 07:00, no_games_today = true");
         } else {
-            // 🔓 Mercado abierto hasta la hora del primer partido (>= 07:00)
             const firstGame = filtered[0];
-            const firstStart = getARGDate(new Date(firstGame.start_time));
+            const firstStartARG = getARGDate(new Date(firstGame.start_time));
 
-            lockStart = firstStart;
+            lockStart = firstStartARG;
 
             console.log(
-                "⏰ Primer partido del día (>=07):",
+                "Primer partido del día (>=07):",
                 firstGame.game_id,
                 "start_time ARG:",
-                firstStart.toISOString()
+                formatARG(firstStartARG)
             );
         }
 
-        // 🔐 lockEnd: día siguiente a las 07:00 ARG
+        // lockEnd: día siguiente a las 07:00 ARG
         const lockEnd = new Date(lockStart);
         lockEnd.setDate(lockStart.getDate() + 1);
         lockEnd.setHours(7, 0, 0, 0);
 
-        console.log("🔒 Guardando market_lock:", {
-            lockStart: lockStart.toISOString(),
-            lockEnd: lockEnd.toISOString(),
+        console.log("Guardando market_lock:", {
+            lockStart: formatARG(lockStart),
+            lockEnd: formatARG(lockEnd),
             noGamesToday,
         });
 
+        // Idempotencia: si ya hay registro “para hoy”, lo reemplazamos
+        // (sin cambiar schema, borramos por día de lock_start en ARG)
+        await pool.query(
+            `DELETE FROM hoopstats.market_lock
+       WHERE (lock_start AT TIME ZONE 'America/Argentina/Buenos_Aires')::date = $1::date`,
+            [todayARG]
+        );
+
         await pool.query(
             `INSERT INTO hoopstats.market_lock (lock_start, lock_end, no_games_today)
-             VALUES ($1, $2, $3)`,
+       VALUES ($1, $2, $3)`,
             [lockStart, lockEnd, noGamesToday]
         );
 
+        console.log("MarketLockCron END OK");
     } catch (err) {
         console.error("Error en MarketLockCron:", err);
+        throw err; 
     }
 };

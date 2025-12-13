@@ -230,22 +230,22 @@ export const getRanking = async (req: any, res: any) => {
     try {
         const ranking = await pool.query(
             `SELECT
-                ft.id,
-                ft.name,
-                ft.total_points,
-                u.username,
-             FROM hoopstats.fantasy_teams ft
-             JOIN hoopstats.users u ON u.id = ft.user_id
-             ORDER BY ft.total_points DESC`
+        ft.id,
+        ft.name,
+        ft.total_points,
+        u.username
+      FROM hoopstats.fantasy_teams ft
+      JOIN hoopstats.users u ON u.id = ft.user_id
+      ORDER BY ft.total_points DESC`
         );
 
         return res.json(ranking.rows);
-
     } catch (err) {
         console.error("Error al obtener ranking:", err);
         return res.status(500).json({ error: "Error al obtener ranking" });
     }
 };
+
 
 
 // Actualizar nombre del equipo
