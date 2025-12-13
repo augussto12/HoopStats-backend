@@ -11,12 +11,13 @@ export const getMarketLock = async (req: any, res: any) => {
             LIMIT 1
         `);
 
+        // Si nunca se corrió el cron / no hay registro aún
         if (r.rows.length === 0) {
             return res.json({
                 isLocked: false,
                 lockStart: null,
                 lockEnd: null,
-                noGamesToday: true
+                noGamesToday: true   // interpretamos como "no hay info / no hay lock"
             });
         }
 
@@ -28,7 +29,11 @@ export const getMarketLock = async (req: any, res: any) => {
             })
         );
 
-        const isLocked = nowARG >= lock_start && nowARG <= lock_end;
+        // CLAVE: si no_games_today = true → jamás se considera locked
+        const isLocked =
+            !no_games_today &&
+            nowARG >= lock_start &&
+            nowARG <= lock_end;
 
         return res.json({
             isLocked,
@@ -38,9 +43,11 @@ export const getMarketLock = async (req: any, res: any) => {
         });
 
     } catch (e) {
+        console.error("Error getMarketLock:", e);
         return res.status(500).json({ error: "Error al obtener market lock" });
     }
 };
+
 
 
 
