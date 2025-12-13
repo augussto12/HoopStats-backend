@@ -4,6 +4,11 @@ import axios from "axios";
 const API_URL = process.env.NBA_API_BASE_URL!;
 const API_KEY = process.env.NBA_API_KEY!;
 const SEASON = process.env.FANTASY_SEASON || "2025";
+
+if (!API_URL || !API_KEY) {
+    console.error("NBA_API_BASE_URL o NBA_API_KEY no configurados. Abortando DailyGamesCron.");
+}
+
 const headers = { "x-apisports-key": API_KEY };
 
 function pad(n: number) {

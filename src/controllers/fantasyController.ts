@@ -234,7 +234,6 @@ export const getRanking = async (req: any, res: any) => {
                 ft.name,
                 ft.total_points,
                 u.username,
-                u.email
              FROM hoopstats.fantasy_teams ft
              JOIN hoopstats.users u ON u.id = ft.user_id
              ORDER BY ft.total_points DESC`
@@ -363,13 +362,29 @@ export const getMyTransactions = async (req: any, res: any) => {
 };
 
 
+
 export const applyTrades = async (req: any, res: any) => {
-    console.log("=== APPLY TRADES START ===");
+    const normalizeIds = (x: any) =>
+        Array.isArray(x)
+            ? [...new Set(x.map((v) => Number(v)).filter((n) => Number.isInteger(n) && n > 0))]
+            : [];
+
+    const addIds = normalizeIds(req.body?.add);
+    const dropIds = normalizeIds(req.body?.drop);
+
+    // máximo 10 movimientos (ajustalo si querés)
+    if (addIds.length > 10 || dropIds.length > 10) {
+        return res.status(400).json({ error: "Demasiados cambios en una sola operación." });
+    }
+
+    // no permitir el mismo id en add y drop
+    const overlap = addIds.filter((id) => dropIds.includes(id));
+    if (overlap.length) {
+        return res.status(400).json({ error: "No podés agregar y quitar el mismo jugador." });
+    }
 
     try {
         const locked = await isMarketLocked();
-        console.log("Market locked?", locked);
-
         if (locked) {
             return res.status(403).json({
                 error: "El mercado está bloqueado. Intentá mañana a las 07:00 AM."
@@ -377,22 +392,17 @@ export const applyTrades = async (req: any, res: any) => {
         }
 
         const userId = req.user.userId;
-        const { add = [], drop = [] } = req.body;
-
-        console.log("User:", userId, "Add:", add, "Drop:", drop);
 
         const client = await pool.connect();
-
         try {
             const teamRes = await client.query(
                 `SELECT id, budget, trades_remaining
-                 FROM hoopstats.fantasy_teams
-                 WHERE user_id = $1`,
+         FROM hoopstats.fantasy_teams
+         WHERE user_id = $1`,
                 [userId]
             );
 
             if (teamRes.rows.length === 0) {
-                client.release();
                 return res.status(400).json({ error: "No tenés equipo creado" });
             }
 
@@ -402,17 +412,13 @@ export const applyTrades = async (req: any, res: any) => {
                 trades_remaining: Number(teamRes.rows[0].trades_remaining),
             };
 
-            console.log("Team loaded:", team);
-
-            const nuevosTrades = Math.max(add.length, drop.length);
+            const nuevosTrades = Math.max(addIds.length, dropIds.length);
 
             if (nuevosTrades === 0) {
-                client.release();
                 return res.status(400).json({ error: "No hay cambios para aplicar." });
             }
 
             if (team.trades_remaining < nuevosTrades) {
-                client.release();
                 return res.status(400).json({ error: "No te quedan trades disponibles hoy." });
             }
 
@@ -423,11 +429,11 @@ export const applyTrades = async (req: any, res: any) => {
             // ============================
             //           DROPS
             // ============================
-            for (const playerId of drop) {
+            for (const playerId of dropIds) {
                 const delRes = await client.query(
                     `DELETE FROM hoopstats.fantasy_players
-                     WHERE fantasy_team_id = $1 AND player_id = $2
-                     RETURNING price`,
+           WHERE fantasy_team_id = $1 AND player_id = $2
+           RETURNING price`,
                     [team.id, playerId]
                 );
 
@@ -436,18 +442,17 @@ export const applyTrades = async (req: any, res: any) => {
 
                     await client.query(
                         `UPDATE hoopstats.fantasy_teams
-                         SET budget = budget + $1
-                         WHERE id = $2`,
+             SET budget = budget + $1
+             WHERE id = $2`,
                         [price, team.id]
                     );
 
                     team.budget += price;
 
-                    // INSERTAR TRADE GLOBAL
                     await client.query(
                         `INSERT INTO hoopstats.fantasy_trades
-                         (fantasy_team_id, player_id, action, created_at)
-                         VALUES ($1, $2, 'drop', $3)`,
+             (fantasy_team_id, player_id, action, created_at)
+             VALUES ($1, $2, 'drop', $3)`,
                         [team.id, playerId, movementTime]
                     );
                 }
@@ -456,12 +461,19 @@ export const applyTrades = async (req: any, res: any) => {
             // ============================
             //            ADDS
             // ============================
-            for (const playerId of add) {
+            for (const playerId of addIds) {
+                // (Opcional pero recomendado) evitar duplicados antes de insertar
+                const dup = await client.query(
+                    `SELECT 1 FROM hoopstats.fantasy_players
+           WHERE fantasy_team_id = $1 AND player_id = $2`,
+                    [team.id, playerId]
+                );
+                if (dup.rows.length) continue;
+
                 const pRes = await client.query(
                     `SELECT price FROM hoopstats.players WHERE id = $1`,
                     [playerId]
                 );
-
                 if (pRes.rows.length === 0) continue;
 
                 const price = Number(pRes.rows[0].price);
@@ -472,8 +484,8 @@ export const applyTrades = async (req: any, res: any) => {
 
                 await client.query(
                     `INSERT INTO hoopstats.fantasy_players
-                     (fantasy_team_id, player_id, price)
-                     VALUES ($1, $2, $3)`,
+           (fantasy_team_id, player_id, price)
+           VALUES ($1, $2, $3)`,
                     [team.id, playerId, price]
                 );
 
@@ -481,32 +493,27 @@ export const applyTrades = async (req: any, res: any) => {
 
                 await client.query(
                     `UPDATE hoopstats.fantasy_teams
-                     SET budget = $1
-                     WHERE id = $2`,
+           SET budget = $1
+           WHERE id = $2`,
                     [team.budget, team.id]
                 );
 
-                // INSERTAR TRADE GLOBAL
                 await client.query(
                     `INSERT INTO hoopstats.fantasy_trades
-                     (fantasy_team_id, player_id, action, created_at)
-                     VALUES ($1, $2, 'add', $3)`,
+           (fantasy_team_id, player_id, action, created_at)
+           VALUES ($1, $2, 'add', $3)`,
                     [team.id, playerId, movementTime]
                 );
             }
 
-            // ============================
-            //   UPDATE trades_remaining
-            // ============================
             await client.query(
                 `UPDATE hoopstats.fantasy_teams
-                 SET trades_remaining = trades_remaining - $1
-                 WHERE id = $2`,
+         SET trades_remaining = trades_remaining - $1
+         WHERE id = $2`,
                 [nuevosTrades, team.id]
             );
 
             await client.query("COMMIT");
-            client.release();
 
             return res.json({
                 message: "Cambios aplicados correctamente",
@@ -514,19 +521,14 @@ export const applyTrades = async (req: any, res: any) => {
             });
 
         } catch (error) {
-            console.log("⛔ APPLY TRADES ERROR:", error);
-
             await client.query("ROLLBACK");
+            return res.status(400).json({ error: "Error al hacer la transacción." });
+        } finally {
             client.release();
-
-            return res.status(400).json({
-                error: "Error al hacer la transacción.",
-            });
         }
 
     } catch (err) {
-        console.log("⛔ APPLY TRADES ROOT ERROR:", err);
-
         return res.status(500).json({ error: "Error inesperado" });
     }
 };
+

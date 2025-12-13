@@ -1,6 +1,17 @@
 import { pool } from "../db";
 
-// Crear predicción
+const normalizeInt = (value: any) => {
+    const n = Number(value);
+    return Number.isInteger(n) && n > 0 ? n : null;
+};
+
+const normalizeScore = (value: any) => {
+    const n = Number(value);
+    if (!Number.isInteger(n)) return null;
+    if (n < 0 || n > 300) return null;
+    return n;
+};
+
 // Crear predicción
 export const createPrediction = async (req: any, res: any) => {
     try {
@@ -13,25 +24,30 @@ export const createPrediction = async (req: any, res: any) => {
             puntos_local_prediccion,
             puntos_visitante_prediccion,
             game_date
-        } = req.body;
+        } = req.body ?? {};
 
-        // Validación completa
+        const gameId = normalizeInt(game_id);
+        const ptsLocal = normalizeScore(puntos_local_prediccion);
+        const ptsVisit = normalizeScore(puntos_visitante_prediccion);
+
         if (
-            !game_id ||
-            !home_team ||
-            !visitor_team ||
-            puntos_local_prediccion == null ||
-            puntos_visitante_prediccion == null ||
+            !gameId ||
+            typeof home_team !== "string" ||
+            typeof visitor_team !== "string" ||
+            !home_team.trim() ||
+            !visitor_team.trim() ||
+            ptsLocal === null ||
+            ptsVisit === null ||
             !game_date
         ) {
-            return res.status(400).json({ error: "Faltan datos" });
+            return res.status(400).json({ error: "Datos inválidos para la predicción." });
         }
 
         // Evitar duplicado
         const exists = await pool.query(
             `SELECT id FROM hoopstats.predicciones 
              WHERE user_id = $1 AND game_id = $2`,
-            [userId, game_id]
+            [userId, gameId]
         );
 
         if (exists.rows.length > 0) {
@@ -40,21 +56,21 @@ export const createPrediction = async (req: any, res: any) => {
             });
         }
 
-        // Insert real
         const insert = await pool.query(
             `INSERT INTO hoopstats.predicciones
                 (user_id, game_id, game_date, home_team, visitor_team,
                  puntos_local_prediccion, puntos_visitante_prediccion, procesada)
              VALUES ($1, $2, $3, $4, $5, $6, $7, false)
-             RETURNING *`,
+             RETURNING id, user_id, game_id, game_date, home_team, visitor_team,
+                       puntos_local_prediccion, puntos_visitante_prediccion, procesada, created_at`,
             [
                 userId,
-                game_id,
+                gameId,
                 game_date,
-                home_team,
-                visitor_team,
-                puntos_local_prediccion,
-                puntos_visitante_prediccion
+                home_team.trim(),
+                visitor_team.trim(),
+                ptsLocal,
+                ptsVisit
             ]
         );
 
@@ -69,8 +85,6 @@ export const createPrediction = async (req: any, res: any) => {
     }
 };
 
-
-// Obtener mis predicciones
 // Obtener mis predicciones
 export const getMyPredictions = async (req: any, res: any) => {
     try {
@@ -79,7 +93,6 @@ export const getMyPredictions = async (req: any, res: any) => {
         const result = await pool.query(
             `SELECT 
                 id,
-                user_id,
                 game_id,
                 home_team,
                 visitor_team,
@@ -105,15 +118,30 @@ export const getMyPredictions = async (req: any, res: any) => {
     }
 };
 
-
 // Obtener predicción para un partido específico
 export const getPredictionForGame = async (req: any, res: any) => {
     try {
         const userId = req.user.userId;
-        const gameId = parseInt(req.params.gameId);
+        const gameId = normalizeInt(req.params.gameId);
+
+        if (!gameId) {
+            return res.status(400).json({ error: "gameId inválido" });
+        }
 
         const result = await pool.query(
-            `SELECT *
+            `SELECT 
+                id,
+                game_id,
+                home_team,
+                visitor_team,
+                puntos_local_prediccion,
+                puntos_visitante_prediccion,
+                puntos_local_real,
+                puntos_visitante_real,
+                puntos_obtenidos,
+                procesada,
+                created_at,
+                TO_CHAR(game_date, 'YYYY-MM-DD') AS game_date
              FROM hoopstats.predicciones
              WHERE user_id = $1 AND game_id = $2`,
             [userId, gameId]
@@ -131,12 +159,16 @@ export const getPredictionForGame = async (req: any, res: any) => {
 export const deletePrediction = async (req: any, res: any) => {
     try {
         const userId = req.user.userId;
-        const id = parseInt(req.params.id);
+        const id = normalizeInt(req.params.id);
+
+        if (!id) {
+            return res.status(400).json({ error: "ID de predicción inválido" });
+        }
 
         const result = await pool.query(
             `DELETE FROM hoopstats.predicciones
              WHERE id = $1 AND user_id = $2
-             RETURNING *`,
+             RETURNING id`,
             [id, userId]
         );
 
@@ -154,6 +186,7 @@ export const deletePrediction = async (req: any, res: any) => {
     }
 };
 
+
 export const getPredictionsRanking = async (req: any, res: any) => {
     try {
         const ranking = await pool.query(
@@ -169,61 +202,5 @@ export const getPredictionsRanking = async (req: any, res: any) => {
     } catch (err) {
         console.error("Error al obtener ranking de predicciones:", err);
         return res.status(500).json({ error: "Error al obtener ranking" });
-    }
-};
-
-// Sumar puntos a los usuarios
-export const sumarPuntosDePredicciones = async (req: any, res: any) => {
-    try {
-
-        // 1. Obtener suma de puntos por usuario
-        const { rows: usuarios } = await pool.query(
-            `SELECT user_id, SUM(puntos_obtenidos) AS total
-             FROM hoopstats.predicciones
-             WHERE procesada = true AND puntos_obtenidos IS NOT NULL
-             GROUP BY user_id`
-        );
-
-        if (usuarios.length === 0) {
-            return res.json({ message: "No hay predicciones procesadas con puntos." });
-        }
-
-        // 2. Transacción
-        const client = await pool.connect();
-        await client.query("BEGIN");
-
-        try {
-            for (const u of usuarios) {
-                const puntos = Number(u.total);
-
-                console.log(`➡️ User ${u.user_id} suma ${puntos} pts`);
-
-                await client.query(
-                    `UPDATE hoopstats.users
-                     SET total_prediction_points = COALESCE(total_prediction_points, 0) + $1
-                     WHERE id = $2`,
-                    [puntos, u.user_id]
-                );
-            }
-
-            await client.query("COMMIT");
-
-            return res.json({
-                message: "Puntos sumados correctamente a los usuarios.",
-                afectados: usuarios.length,
-                detalle: usuarios
-            });
-
-        } catch (err) {
-            await client.query("ROLLBACK");
-            console.error("Error durante la transacción:", err);
-            return res.status(500).json({ error: "Error al sumar puntos" });
-        } finally {
-            client.release();
-        }
-
-    } catch (err) {
-        console.error("Error en sumarPuntosDePredicciones:", err);
-        return res.status(500).json({ error: "Error interno" });
     }
 };

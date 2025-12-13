@@ -10,6 +10,7 @@ export const configureSecurity = (app: any) => {
        0) JSON LIMIT (Anti-DoS)
     ============================== */
     app.use(express.json({ limit: "200kb" }));
+    app.use(express.urlencoded({ extended: true, limit: "200kb" }));
 
     /* =============================
        1) HELMET
@@ -25,8 +26,9 @@ export const configureSecurity = (app: any) => {
                 imgSrc: ["'self'", "data:", "blob:", "https:"],
                 connectSrc: [
                     "'self'",
-                    "https://v2.nba.api-sports.io",
-                    "https://hoopstats.com.ar"
+                    "https://hoopstats.com.ar",
+                    "https://www.hoopstats.com.ar",
+                    "https://hoopstats-backend-production.up.railway.app" 
                 ],
                 fontSrc: ["'self'", "https:", "data:"],
                 objectSrc: ["'none'"],

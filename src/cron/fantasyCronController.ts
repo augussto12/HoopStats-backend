@@ -22,10 +22,15 @@ function getArgentinaDate(offsetDays: number = 0) {
 }
 
 async function apiGet(path: string, params: any = {}) {
+    if (!API_URL || !API_KEY) {
+        throw new Error("NBA_API_BASE_URL o NBA_API_KEY no configurados");
+    }
+
     const url = `${API_URL}${path}`;
     const res = await axios.get(url, { headers, params });
     return res.data.response;
 }
+
 
 function parseMinutes(minStr: string) {
     if (!minStr) return 0;

@@ -24,6 +24,8 @@ import marketLockRoutes from "./routes/marketLockRoutes";
 import marketLockCronRoutes from "./routes/marketLockCronRoutes";
 import dailyGamesCronRoutes from "./routes/dailyGamesCronRoutes";
 import gameRoutes from "./routes/gamesRoutes"
+import nbaRoutes from "./routes/nbaRoutes"
+import { requireEmailVerified } from "./middlewares/requireEmailVerified";
 
 dotenv.config();
 
@@ -66,12 +68,12 @@ app.use(cors({
         "https://www.hoopstats.com.ar",
         "https://hoopstats.netlify.app",
     ],
-    credentials: true,
+    credentials: false,
+    allowedHeaders: ["Content-Type", "Authorization", "x-cron-key"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 }));
 
-// Body parser
-app.use(express.json({ limit: "1mb" }));
-app.use(express.urlencoded({ extended: true, limit: "1mb" }));
+
 
 // Seguridad
 configureSecurity(app);
@@ -81,23 +83,22 @@ const PORT = process.env.PORT || 3000;
 // ──────────────────────────────────────────
 //                 RUTAS
 // ──────────────────────────────────────────
-
+app.use("/api/nba", nbaRoutes);
 app.use("/api/auth", authRoutes);
-app.use("/api/fantasy", fantasyRoutes);
-app.use("/api/notifications", notificationRoutes);
+app.use("/api/fantasy", auth, requireEmailVerified, fantasyRoutes);
+app.use("/api/notifications", auth, notificationRoutes);
 
-app.use("/api/fantasy-leagues", fantasyLeaguesRoutes);
-app.use("/api/fantasy-trades", fantasyTradesRoutes);
-
-app.use("/api/fantasy-league-membership", leaguesMembershipRoutes);
+app.use("/api/fantasy-leagues", auth, requireEmailVerified, fantasyLeaguesRoutes);
+app.use("/api/fantasy-trades", auth, requireEmailVerified, fantasyTradesRoutes);
+app.use("/api/fantasy-league-membership", auth, requireEmailVerified, leaguesMembershipRoutes);
 
 app.use("/api/players", playerRoutes);
 app.use("/api/teams", teamRoutes);
-app.use("/api/predictions", predictionRoutes);
+app.use("/api/predictions", auth, requireEmailVerified, predictionRoutes);
 
 app.use("/api/users", userRoutes);
 app.use("/api/cron", cronRoutes);
-app.use("/api/favorites", favoritesRoutes);
+app.use("/api/favorites", auth, requireEmailVerified, favoritesRoutes);
 app.use("/api/best-players", bestPlayersRoutes);
 
 app.use("/api/market-lock", marketLockRoutes);

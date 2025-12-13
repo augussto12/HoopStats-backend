@@ -5,7 +5,11 @@ import { pool } from "../db";
 // ================================================================
 export const getGroupedTradesByTeam = async (req: any, res: any) => {
     try {
-        const teamId = parseInt(req.params.teamId);
+        const teamId = Number(req.params.teamId);
+
+        if (!Number.isInteger(teamId) || teamId <= 0) {
+            return res.status(400).json({ error: "ID de equipo inválido" });
+        }
 
         const grouped = await pool.query(
             `
@@ -13,8 +17,10 @@ export const getGroupedTradesByTeam = async (req: any, res: any) => {
                 t.created_at AS timestamp,
                 ft.name AS team_name,
                 u.username AS user_name,
-                ARRAY_AGG(p.full_name ORDER BY p.full_name) FILTER (WHERE t.action = 'add') AS entran,
-                ARRAY_AGG(p.full_name ORDER BY p.full_name) FILTER (WHERE t.action = 'drop') AS salen
+                ARRAY_AGG(p.full_name ORDER BY p.full_name) 
+                    FILTER (WHERE t.action = 'add')  AS entran,
+                ARRAY_AGG(p.full_name ORDER BY p.full_name) 
+                    FILTER (WHERE t.action = 'drop') AS salen
             FROM hoopstats.fantasy_trades t
             JOIN hoopstats.players p ON p.id = t.player_id
             JOIN hoopstats.fantasy_teams ft ON ft.id = t.fantasy_team_id
@@ -40,7 +46,11 @@ export const getGroupedTradesByTeam = async (req: any, res: any) => {
 // ================================================================
 export const getGroupedTradesByLeague = async (req: any, res: any) => {
     try {
-        const leagueId = parseInt(req.params.leagueId);
+        const leagueId = Number(req.params.leagueId);
+
+        if (!Number.isInteger(leagueId) || leagueId <= 0) {
+            return res.status(400).json({ error: "ID de liga inválido" });
+        }
 
         const grouped = await pool.query(
             `
@@ -49,7 +59,7 @@ export const getGroupedTradesByLeague = async (req: any, res: any) => {
                 ft.name AS team_name,
                 u.username AS user_name,
                 ARRAY_AGG(p.full_name ORDER BY p.full_name)
-                    FILTER (WHERE t.action = 'add') AS entran,
+                    FILTER (WHERE t.action = 'add')  AS entran,
                 ARRAY_AGG(p.full_name ORDER BY p.full_name)
                     FILTER (WHERE t.action = 'drop') AS salen
             FROM hoopstats.fantasy_trades t
@@ -80,17 +90,22 @@ export const getGroupedTradesByLeague = async (req: any, res: any) => {
 // ================================================================
 export const getLeagueMarket = async (req: any, res: any) => {
     try {
-        const leagueId = parseInt(req.params.leagueId);
+        const leagueId = Number(req.params.leagueId);
+
+        if (!Number.isInteger(leagueId) || leagueId <= 0) {
+            return res.status(400).json({ error: "ID de liga inválido" });
+        }
 
         const market = await pool.query(
             `
             SELECT
                 p.full_name,
-                SUM(CASE WHEN t.action = 'add' THEN 1 ELSE 0 END) AS total_adds,
+                SUM(CASE WHEN t.action = 'add'  THEN 1 ELSE 0 END) AS total_adds,
                 SUM(CASE WHEN t.action = 'drop' THEN 1 ELSE 0 END) AS total_drops
             FROM hoopstats.fantasy_trades t
             JOIN hoopstats.players p ON p.id = t.player_id
-            JOIN hoopstats.fantasy_league_teams flt ON flt.fantasy_team_id = t.fantasy_team_id
+            JOIN hoopstats.fantasy_league_teams flt 
+                ON flt.fantasy_team_id = t.fantasy_team_id
             WHERE flt.league_id = $1
             GROUP BY p.full_name
             ORDER BY total_adds DESC, total_drops DESC

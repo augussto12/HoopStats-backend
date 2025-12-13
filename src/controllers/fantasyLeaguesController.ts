@@ -473,18 +473,17 @@ export const getMyCreatedLeagues = async (req: any, res: any) => {
         );
 
         const leagues = leaguesRes.rows;
-        const response = [];
+        const response: any[] = [];
 
         for (const league of leagues) {
             const leagueId = league.id;
 
-            // Miembros
+            // MIEMBROS (sin email)
             const membersRes = await pool.query(
                 `
                 SELECT 
                     u.id,
                     u.username,
-                    u.email,
                     flt.is_admin,
                     sl.code AS status,
                     sl.description AS status_desc
@@ -500,28 +499,26 @@ export const getMyCreatedLeagues = async (req: any, res: any) => {
             const members = membersRes.rows.map(m => ({
                 id: m.id,
                 username: m.username,
-                email: m.email,
                 role: m.is_admin ? "admin" : "member",
                 status: m.status,
                 status_desc: m.status_desc,
                 origin: "team"
             }));
 
-            // Invitaciones
+            // INVITACIONES (sin email)
             const invitesRes = await pool.query(
                 `
                 SELECT 
                     i.id AS invite_id,
                     i.invited_user_id AS user_id,
                     u.username,
-                    u.email,
                     sl.code AS status,
                     sl.description AS status_desc
                 FROM hoopstats.fantasy_league_invites i
                 JOIN hoopstats.users u ON u.id = i.invited_user_id
                 JOIN hoopstats.fantasy_league_statuses sl ON sl.id = i.status_id
                 WHERE i.league_id = $1
-                AND sl.code IN ('pending', 'rejected')   -- 🔥 FILTRO CLAVE
+                  AND sl.code IN ('pending', 'rejected')
                 `,
                 [leagueId]
             );
@@ -529,7 +526,6 @@ export const getMyCreatedLeagues = async (req: any, res: any) => {
             const invites = invitesRes.rows.map(i => ({
                 id: i.user_id,
                 username: i.username,
-                email: i.email,
                 status: i.status,
                 status_desc: i.status_desc,
                 invite_id: i.invite_id,
@@ -553,6 +549,7 @@ export const getMyCreatedLeagues = async (req: any, res: any) => {
 
 
 
+
 // ================================================================
 //             LIGAS DE LAS QUE SOY ADMIN
 // ================================================================
@@ -560,7 +557,6 @@ export const getLeaguesWhereImAdmin = async (req: any, res: any) => {
     try {
         const userId = req.user.userId;
 
-        // 1) TRAER LIGAS DONDE SOY ADMIN
         const leaguesRes = await pool.query(
             `
             SELECT fl.*
@@ -568,74 +564,67 @@ export const getLeaguesWhereImAdmin = async (req: any, res: any) => {
             JOIN hoopstats.fantasy_league_teams flt ON flt.league_id = fl.id
             JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
             WHERE ft.user_id = $1
-            AND flt.is_admin = true
+              AND flt.is_admin = true
             ORDER BY fl.created_at DESC
             `,
             [userId]
         );
 
         const leagues = leaguesRes.rows;
-        const response = [];
+        const response: any[] = [];
 
-        // 2) RECORRER LIGAS PARA ARMAR LA MISMA ESTRUCTURA DE getMyCreatedLeagues
         for (const league of leagues) {
             const leagueId = league.id;
 
-            // --- MIEMBROS ---
+            // --- MIEMBROS (sin email) ---
             const membersRes = await pool.query(
                 `
-            SELECT 
-                u.id,
-                u.username,
-                u.email,
-                flt.is_admin,
-                sl.code AS status,
-                sl.description AS status_desc
-            FROM hoopstats.fantasy_league_teams flt
-            JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
-            JOIN hoopstats.users u ON u.id = ft.user_id
-            JOIN hoopstats.fantasy_league_statuses sl ON sl.id = flt.status_id
-            WHERE flt.league_id = $1
-            AND sl.code IN ('active', 'pending', 'inactive') 
-            `,
+                SELECT 
+                    u.id,
+                    u.username,
+                    flt.is_admin,
+                    sl.code AS status,
+                    sl.description AS status_desc
+                FROM hoopstats.fantasy_league_teams flt
+                JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
+                JOIN hoopstats.users u ON u.id = ft.user_id
+                JOIN hoopstats.fantasy_league_statuses sl ON sl.id = flt.status_id
+                WHERE flt.league_id = $1
+                  AND sl.code IN ('active', 'pending', 'inactive')
+                `,
                 [leagueId]
             );
-
 
             const members = membersRes.rows.map(m => ({
                 id: m.id,
                 username: m.username,
-                email: m.email,
                 role: m.is_admin ? "admin" : "member",
                 status: m.status,
                 status_desc: m.status_desc,
                 origin: "team"
             }));
 
-            // --- INVITACIONES ---
+            // --- INVITACIONES (sin email) ---
             const invitesRes = await pool.query(
                 `
-            SELECT 
-                i.id AS invite_id,
-                i.invited_user_id AS user_id,
-                u.username,
-                u.email,
-                sl.code AS status,
-                sl.description AS status_desc
-            FROM hoopstats.fantasy_league_invites i
-            JOIN hoopstats.users u ON u.id = i.invited_user_id
-            JOIN hoopstats.fantasy_league_statuses sl ON sl.id = i.status_id
-            WHERE i.league_id = $1
-            AND sl.code = 'pending' 
-            `,
+                SELECT 
+                    i.id AS invite_id,
+                    i.invited_user_id AS user_id,
+                    u.username,
+                    sl.code AS status,
+                    sl.description AS status_desc
+                FROM hoopstats.fantasy_league_invites i
+                JOIN hoopstats.users u ON u.id = i.invited_user_id
+                JOIN hoopstats.fantasy_league_statuses sl ON sl.id = i.status_id
+                WHERE i.league_id = $1
+                  AND sl.code = 'pending'
+                `,
                 [leagueId]
             );
-
 
             const invites = invitesRes.rows.map(i => ({
                 id: i.user_id,
                 username: i.username,
-                email: i.email,
                 status: i.status,
                 status_desc: i.status_desc,
                 invite_id: i.invite_id,
@@ -643,7 +632,6 @@ export const getLeaguesWhereImAdmin = async (req: any, res: any) => {
                 origin: "invite"
             }));
 
-            // MISMA ESTRUCTURA QUE getMyCreatedLeagues
             response.push({
                 league,
                 members: [...members, ...invites]
@@ -657,6 +645,7 @@ export const getLeaguesWhereImAdmin = async (req: any, res: any) => {
         return res.status(500).json({ error: "Error al obtener ligas administradas" });
     }
 };
+
 
 
 export const getLeagueDetails = async (req: any, res: any) => {

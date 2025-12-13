@@ -2,28 +2,58 @@ import { pool } from "../db";
 import { getStatusId, getUsername } from "../utils/fantasy";
 import { createNotification } from "./notificationController";
 
+// Helper para IDs
+const toPositiveInt = (value: any) => {
+    const n = Number(value);
+    return Number.isInteger(n) && n > 0 ? n : null;
+};
+
 // ================================================================
 //                 USUARIO PIDE UNIRSE A LIGA
 // ================================================================
 export const requestJoinLeague = async (req: any, res: any) => {
     try {
         const userId = req.user.userId;
-        const leagueId = parseInt(req.params.leagueId);
+        const leagueId = toPositiveInt(req.params.leagueId);
 
-        const leagueRes = await pool.query(`
-            SELECT name, privacy, created_by 
-            FROM hoopstats.fantasy_leagues WHERE id = $1
-        `, [leagueId]);
+        if (!leagueId) {
+            return res.status(400).json({ error: "ID de liga inválido" });
+        }
+
+        const leagueRes = await pool.query(
+            `
+            SELECT 
+                name, 
+                privacy, 
+                created_by,
+                max_teams
+            FROM hoopstats.fantasy_leagues 
+            WHERE id = $1
+            `,
+            [leagueId]
+        );
 
         if (leagueRes.rows.length === 0) {
             return res.status(404).json({ error: "Liga no encontrada" });
         }
 
-        const { name: leagueName, privacy, created_by } = leagueRes.rows[0];
+        const {
+            name: leagueName,
+            privacy,
+            created_by,
+            max_teams
+        } = leagueRes.rows[0];
 
-        const teamRes = await pool.query(`
-            SELECT id FROM hoopstats.fantasy_teams WHERE user_id = $1
-        `, [userId]);
+        // Normalizamos maxTeams (puede venir como string/number/null desde PG)
+        const maxTeams =
+            max_teams === null || max_teams === undefined
+                ? null
+                : Number(max_teams);
+
+        const teamRes = await pool.query(
+            `SELECT id FROM hoopstats.fantasy_teams WHERE user_id = $1`,
+            [userId]
+        );
 
         if (teamRes.rows.length === 0) {
             return res.status(400).json({ error: "Debés crear un equipo primero" });
@@ -31,27 +61,55 @@ export const requestJoinLeague = async (req: any, res: any) => {
 
         const teamId = teamRes.rows[0].id;
 
-        const exists = await pool.query(`
-            SELECT 1 FROM hoopstats.fantasy_league_teams
+        // ya está en la liga
+        const exists = await pool.query(
+            `
+            SELECT 1 
+            FROM hoopstats.fantasy_league_teams
             WHERE league_id = $1 AND fantasy_team_id = $2
-        `, [leagueId, teamId]);
+            `,
+            [leagueId, teamId]
+        );
 
         if (exists.rows.length > 0) {
             return res.status(400).json({ error: "Ya estás en esta liga" });
         }
 
-        // Pública → se une directamente
+        // 🔐 Chequeo de capacidad (si la liga tiene max_teams definido)
+        if (maxTeams !== null) {
+            const countRes = await pool.query(
+                `
+                SELECT COUNT(*) 
+                FROM hoopstats.fantasy_league_teams
+                WHERE league_id = $1
+                `,
+                [leagueId]
+            );
+
+            const currentTeams = Number(countRes.rows[0].count);
+
+            if (currentTeams >= maxTeams) {
+                return res.status(400).json({
+                    error: "La liga ya alcanzó el máximo de equipos permitido"
+                });
+            }
+        }
+
+        // Liga pública → se une directamente
         if (privacy === "public") {
             const activeId = await getStatusId("membership", "active");
 
-            const reqInsert = await pool.query(`
+            const membershipInsert = await pool.query(
+                `
                 INSERT INTO hoopstats.fantasy_league_teams 
-                (league_id, fantasy_team_id, status_id)
+                    (league_id, fantasy_team_id, status_id)
                 VALUES ($1, $2, $3)
-            `, [leagueId, teamId, activeId]);
+                RETURNING id
+                `,
+                [leagueId, teamId, activeId]
+            );
 
-            const requestId = reqInsert.rows[0].id;
-
+            const membershipId = membershipInsert.rows[0].id;
             const byUserName = await getUsername(userId);
 
             await createNotification(
@@ -59,24 +117,44 @@ export const requestJoinLeague = async (req: any, res: any) => {
                 "join",
                 "Nuevo miembro en tu liga",
                 `${byUserName} se unió a ${leagueName}`,
-                { requestId, leagueId, byUserId: userId, byUserName, leagueName }
+                { membershipId, leagueId, byUserId: userId, byUserName, leagueName }
             );
 
             return res.json({ message: "Te uniste a la liga (pública)" });
         }
 
-        // Privada → crea solicitud pending
+        // Liga privada → crea solicitud pending
         const pendingId = await getStatusId("request", "pending");
 
-        const reqInsert = await pool.query(`
+        // ¿Ya tiene una solicitud pendiente para esta liga?
+        const existingRequest = await pool.query(
+            `
+            SELECT 1
+            FROM hoopstats.fantasy_league_requests
+            WHERE league_id = $1
+              AND user_id = $2
+              AND status_id = $3
+            `,
+            [leagueId, userId, pendingId]
+        );
+
+        if (existingRequest.rows.length > 0) {
+            return res.status(400).json({
+                error: "Ya tenés una solicitud pendiente para esta liga"
+            });
+        }
+
+        const reqInsert = await pool.query(
+            `
             INSERT INTO hoopstats.fantasy_league_requests
-            (league_id, user_id, status_id)
+                (league_id, user_id, status_id)
             VALUES ($1, $2, $3)
             RETURNING id
-        `, [leagueId, userId, pendingId]);
+            `,
+            [leagueId, userId, pendingId]
+        );
 
         const requestId = reqInsert.rows[0].id;
-
         const byUserName = await getUsername(userId);
 
         await createNotification(
@@ -87,8 +165,6 @@ export const requestJoinLeague = async (req: any, res: any) => {
             { requestId, leagueId, byUserId: userId, byUserName, leagueName }
         );
 
-
-
         return res.json({ message: "Solicitud enviada al administrador" });
 
     } catch (err) {
@@ -98,21 +174,27 @@ export const requestJoinLeague = async (req: any, res: any) => {
 };
 
 
-
 // ================================================================
 //              ADMIN APRUEBA SOLICITUD
 // ================================================================
 export const approveJoinRequest = async (req: any, res: any) => {
     try {
         const adminId = req.user.userId;
-        const requestId = parseInt(req.params.requestId);
+        const requestId = toPositiveInt(req.params.requestId);
 
-        const reqRes = await pool.query(`
+        if (!requestId) {
+            return res.status(400).json({ error: "ID de solicitud inválido" });
+        }
+
+        const reqRes = await pool.query(
+            `
             SELECT lr.*, fl.created_by, fl.name AS league_name
             FROM hoopstats.fantasy_league_requests lr
             JOIN hoopstats.fantasy_leagues fl ON fl.id = lr.league_id
             WHERE lr.id = $1
-        `, [requestId]);
+            `,
+            [requestId]
+        );
 
         if (reqRes.rows.length === 0) {
             return res.status(404).json({ error: "Solicitud no encontrada" });
@@ -124,28 +206,38 @@ export const approveJoinRequest = async (req: any, res: any) => {
             return res.status(403).json({ error: "No sos admin de esta liga" });
         }
 
-        const team = await pool.query(`
-            SELECT id FROM hoopstats.fantasy_teams WHERE user_id = $1
-        `, [request.user_id]);
+        const team = await pool.query(
+            `SELECT id FROM hoopstats.fantasy_teams WHERE user_id = $1`,
+            [request.user_id]
+        );
+
+        if (team.rows.length === 0) {
+            return res.status(400).json({ error: "El usuario no tiene equipo" });
+        }
 
         const teamId = team.rows[0].id;
 
         const activeId = await getStatusId("membership", "active");
         const acceptedId = await getStatusId("request", "accepted");
 
-        await pool.query(`
+        await pool.query(
+            `
             INSERT INTO hoopstats.fantasy_league_teams
-            (league_id, fantasy_team_id, status_id)
+                (league_id, fantasy_team_id, status_id)
             VALUES ($1, $2, $3)
-        `, [request.league_id, teamId, activeId]);
+            `,
+            [request.league_id, teamId, activeId]
+        );
 
-        await pool.query(`
+        await pool.query(
+            `
             UPDATE hoopstats.fantasy_league_requests
             SET status_id = $1
             WHERE id = $2
-        `, [acceptedId, requestId]);
+            `,
+            [acceptedId, requestId]
+        );
 
-        // → Notificación al usuario
         await createNotification(
             request.user_id,
             "join_request_approved",
@@ -169,14 +261,21 @@ export const approveJoinRequest = async (req: any, res: any) => {
 export const rejectJoinRequest = async (req: any, res: any) => {
     try {
         const adminId = req.user.userId;
-        const requestId = parseInt(req.params.requestId);
+        const requestId = toPositiveInt(req.params.requestId);
 
-        const reqRes = await pool.query(`
+        if (!requestId) {
+            return res.status(400).json({ error: "ID de solicitud inválido" });
+        }
+
+        const reqRes = await pool.query(
+            `
             SELECT lr.*, fl.created_by, fl.name AS league_name
             FROM hoopstats.fantasy_league_requests lr
             JOIN hoopstats.fantasy_leagues fl ON fl.id = lr.league_id
             WHERE lr.id = $1
-        `, [requestId]);
+            `,
+            [requestId]
+        );
 
         if (reqRes.rows.length === 0) {
             return res.status(404).json({ error: "Solicitud no encontrada" });
@@ -190,13 +289,15 @@ export const rejectJoinRequest = async (req: any, res: any) => {
 
         const rejectedId = await getStatusId("request", "rejected");
 
-        await pool.query(`
+        await pool.query(
+            `
             UPDATE hoopstats.fantasy_league_requests
             SET status_id = $1
             WHERE id = $2
-        `, [rejectedId, requestId]);
+            `,
+            [rejectedId, requestId]
+        );
 
-        // → Notificación al usuario
         await createNotification(
             request.user_id,
             "join_request_rejected",
@@ -221,17 +322,26 @@ export const rejectJoinRequest = async (req: any, res: any) => {
 export const cancelRequest = async (req: any, res: any) => {
     try {
         const userId = req.user.userId;
-        const requestId = parseInt(req.params.requestId);
+        const requestId = toPositiveInt(req.params.requestId);
+
+        if (!requestId) {
+            return res.status(400).json({ error: "ID de solicitud inválido" });
+        }
 
         const pendingId = await getStatusId("request", "pending");
 
-        await pool.query(
+        const result = await pool.query(
             `
             DELETE FROM hoopstats.fantasy_league_requests
             WHERE id = $1 AND user_id = $2 AND status_id = $3
+            RETURNING id
             `,
             [requestId, userId, pendingId]
         );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: "Solicitud no encontrada o ya procesada" });
+        }
 
         return res.json({ message: "Solicitud cancelada" });
 
@@ -248,40 +358,59 @@ export const cancelRequest = async (req: any, res: any) => {
 export const inviteUserToLeague = async (req: any, res: any) => {
     try {
         const adminId = req.user.userId;
-        const leagueId = parseInt(req.params.leagueId);
-        const { userId } = req.body;
+        const leagueId = toPositiveInt(req.params.leagueId);
+        const rawUserId = req.body?.userId;
+        const userId = toPositiveInt(rawUserId);
+
+        if (!leagueId) {
+            return res.status(400).json({ error: "ID de liga inválido" });
+        }
+        if (!userId) {
+            return res.status(400).json({ error: "ID de usuario inválido" });
+        }
 
         // Verificar admin
-        const check = await pool.query(`
+        const check = await pool.query(
+            `
             SELECT 1
             FROM hoopstats.fantasy_league_teams flt
             JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
-            WHERE flt.league_id = $1 AND flt.is_admin = true AND ft.user_id = $2
-        `, [leagueId, adminId]);
+            WHERE flt.league_id = $1 
+              AND flt.is_admin = true 
+              AND ft.user_id = $2
+            `,
+            [leagueId, adminId]
+        );
 
         if (check.rows.length === 0) {
             return res.status(403).json({ error: "No sos admin de esta liga" });
         }
 
-        // Obtener nombre de liga (FALTABA)
-        const leagueRes = await pool.query(`
-            SELECT name FROM hoopstats.fantasy_leagues WHERE id = $1
-        `, [leagueId]);
+        // Obtener nombre de liga
+        const leagueRes = await pool.query(
+            `SELECT name FROM hoopstats.fantasy_leagues WHERE id = $1`,
+            [leagueId]
+        );
+
+        if (leagueRes.rows.length === 0) {
+            return res.status(404).json({ error: "Liga no encontrada" });
+        }
 
         const leagueName = leagueRes.rows[0].name;
-
         const pendingId = await getStatusId("invite", "pending");
 
-        const invInsert = await pool.query(`
+        const invInsert = await pool.query(
+            `
             INSERT INTO hoopstats.fantasy_league_invites
-            (league_id, invited_user_id, invited_by, status_id)
+                (league_id, invited_user_id, invited_by, status_id)
             VALUES ($1, $2, $3, $4)
             RETURNING id
-        `, [leagueId, userId, adminId, pendingId]);
+            `,
+            [leagueId, userId, adminId, pendingId]
+        );
 
         const inviteId = invInsert.rows[0].id;
 
-        // Notificación corregida
         await createNotification(
             userId,
             "invite_received",
@@ -306,14 +435,21 @@ export const inviteUserToLeague = async (req: any, res: any) => {
 export const acceptInvite = async (req: any, res: any) => {
     try {
         const userId = req.user.userId;
-        const inviteId = parseInt(req.params.inviteId);
+        const inviteId = toPositiveInt(req.params.inviteId);
 
-        const inviteRes = await pool.query(`
+        if (!inviteId) {
+            return res.status(400).json({ error: "ID de invitación inválido" });
+        }
+
+        const inviteRes = await pool.query(
+            `
             SELECT i.*, fl.created_by, fl.name AS league_name
             FROM hoopstats.fantasy_league_invites i
             JOIN hoopstats.fantasy_leagues fl ON fl.id = i.league_id
             WHERE i.id = $1
-        `, [inviteId]);
+            `,
+            [inviteId]
+        );
 
         const invite = inviteRes.rows[0];
 
@@ -325,9 +461,10 @@ export const acceptInvite = async (req: any, res: any) => {
             return res.status(403).json({ error: "No podés aceptar esta invitación" });
         }
 
-        const team = await pool.query(`
-            SELECT id FROM hoopstats.fantasy_teams WHERE user_id = $1
-        `, [userId]);
+        const team = await pool.query(
+            `SELECT id FROM hoopstats.fantasy_teams WHERE user_id = $1`,
+            [userId]
+        );
 
         if (team.rows.length === 0) {
             return res.status(400).json({
@@ -336,21 +473,26 @@ export const acceptInvite = async (req: any, res: any) => {
         }
 
         const teamId = team.rows[0].id;
-
         const activeId = await getStatusId("membership", "active");
         const acceptedId = await getStatusId("invite", "accepted");
 
-        await pool.query(`
+        await pool.query(
+            `
             INSERT INTO hoopstats.fantasy_league_teams 
-            (league_id, fantasy_team_id, is_admin, status_id)
+                (league_id, fantasy_team_id, is_admin, status_id)
             VALUES ($1, $2, false, $3)
-        `, [invite.league_id, teamId, activeId]);
+            `,
+            [invite.league_id, teamId, activeId]
+        );
 
-        await pool.query(`
+        await pool.query(
+            `
             UPDATE hoopstats.fantasy_league_invites
             SET status_id = $1
             WHERE id = $2
-        `, [acceptedId, inviteId]);
+            `,
+            [acceptedId, inviteId]
+        );
 
         const userName = await getUsername(userId);
 
@@ -378,14 +520,21 @@ export const acceptInvite = async (req: any, res: any) => {
 export const rejectInvite = async (req: any, res: any) => {
     try {
         const userId = req.user.userId;
-        const inviteId = parseInt(req.params.inviteId);
+        const inviteId = toPositiveInt(req.params.inviteId);
 
-        const inviteRes = await pool.query(`
+        if (!inviteId) {
+            return res.status(400).json({ error: "ID de invitación inválido" });
+        }
+
+        const inviteRes = await pool.query(
+            `
             SELECT i.*, fl.created_by, fl.name AS league_name
             FROM hoopstats.fantasy_league_invites i
             JOIN hoopstats.fantasy_leagues fl ON fl.id = i.league_id
             WHERE i.id = $1
-        `, [inviteId]);
+            `,
+            [inviteId]
+        );
 
         const invite = inviteRes.rows[0];
 
@@ -399,21 +548,16 @@ export const rejectInvite = async (req: any, res: any) => {
 
         const rejectedId = await getStatusId("invite", "rejected");
 
-        // Cambiar estado
-        await pool.query(`
+        // Cambiar estado a rechazado
+        await pool.query(
+            `
             UPDATE hoopstats.fantasy_league_invites
             SET status_id = $1
             WHERE id = $2
-        `, [rejectedId, inviteId]);
+            `,
+            [rejectedId, inviteId]
+        );
 
-
-        await pool.query(`
-            DELETE FROM hoopstats.fantasy_league_teams
-            WHERE league_id = $1 AND fantasy_team_id = $2
-        `, [invite.league_id, userId]);
-
-
-        // Notificar al admin creador
         const userName = await getUsername(userId);
 
         await createNotification(
@@ -474,20 +618,28 @@ export const getMyInvites = async (req: any, res: any) => {
 
 
 
+
 // ================================================================
 //                 CANCELAR INVITE (ADMIN)
 // ================================================================
 export const cancelInvite = async (req: any, res: any) => {
     try {
         const adminId = req.user.userId;
-        const inviteId = parseInt(req.params.inviteId);
+        const inviteId = toPositiveInt(req.params.inviteId);
 
-        const inviteRes = await pool.query(`
+        if (!inviteId) {
+            return res.status(400).json({ error: "ID de invitación inválido" });
+        }
+
+        const inviteRes = await pool.query(
+            `
             SELECT i.*, fl.name AS league_name
             FROM hoopstats.fantasy_league_invites i
             JOIN hoopstats.fantasy_leagues fl ON fl.id = i.league_id
             WHERE i.id = $1
-        `, [inviteId]);
+            `,
+            [inviteId]
+        );
 
         const invite = inviteRes.rows[0];
 
@@ -499,12 +651,11 @@ export const cancelInvite = async (req: any, res: any) => {
             return res.status(403).json({ error: "No podés cancelar esta invitación" });
         }
 
-        await pool.query(`
-            DELETE FROM hoopstats.fantasy_league_invites
-            WHERE id = $1
-        `, [inviteId]);
+        await pool.query(
+            `DELETE FROM hoopstats.fantasy_league_invites WHERE id = $1`,
+            [inviteId]
+        );
 
-        // → Notificación al usuario invitado
         await createNotification(
             invite.invited_user_id,
             "invite_canceled",
@@ -521,31 +672,46 @@ export const cancelInvite = async (req: any, res: any) => {
     }
 };
 
+
+
 // ================================================================
 //                       HACER ADMIN
 // ================================================================
 export const promoteToAdmin = async (req: any, res: any) => {
     try {
         const adminId = req.user.userId;
-        const leagueId = parseInt(req.params.leagueId);
-        const targetUserId = parseInt(req.params.userId);
+        const leagueId = toPositiveInt(req.params.leagueId);
+        const targetUserId = toPositiveInt(req.params.userId);
+
+        if (!leagueId) {
+            return res.status(400).json({ error: "ID de liga inválido" });
+        }
+        if (!targetUserId) {
+            return res.status(400).json({ error: "ID de usuario inválido" });
+        }
 
         // Verificar admin que ejecuta acción
-        const check = await pool.query(`
+        const check = await pool.query(
+            `
             SELECT 1
             FROM hoopstats.fantasy_league_teams flt
             JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
-            WHERE flt.league_id = $1 AND flt.is_admin = true AND ft.user_id = $2
-        `, [leagueId, adminId]);
+            WHERE flt.league_id = $1 
+              AND flt.is_admin = true 
+              AND ft.user_id = $2
+            `,
+            [leagueId, adminId]
+        );
 
         if (check.rows.length === 0) {
             return res.status(403).json({ error: "No sos admin de esta liga" });
         }
 
         // Obtener team del usuario objetivo
-        const team = await pool.query(`
-            SELECT id FROM hoopstats.fantasy_teams WHERE user_id = $1
-        `, [targetUserId]);
+        const team = await pool.query(
+            `SELECT id FROM hoopstats.fantasy_teams WHERE user_id = $1`,
+            [targetUserId]
+        );
 
         if (team.rows.length === 0) {
             return res.status(404).json({ error: "El usuario no tiene equipo" });
@@ -554,21 +720,25 @@ export const promoteToAdmin = async (req: any, res: any) => {
         const teamId = team.rows[0].id;
 
         // Obtener datos de liga para notificación
-        const league = await pool.query(`
-            SELECT name FROM hoopstats.fantasy_leagues WHERE id = $1
-        `, [leagueId]);
+        const league = await pool.query(
+            `SELECT name FROM hoopstats.fantasy_leagues WHERE id = $1`,
+            [leagueId]
+        );
+
+        if (league.rows.length === 0) {
+            return res.status(404).json({ error: "Liga no encontrada" });
+        }
 
         const leagueName = league.rows[0].name;
 
-        // Obtener nombre de quien promueve
-        const performerName = await getUsername(adminId);
-
-        // Promover a admin
-        await pool.query(`
+        await pool.query(
+            `
             UPDATE hoopstats.fantasy_league_teams
             SET is_admin = true
             WHERE league_id = $1 AND fantasy_team_id = $2
-        `, [leagueId, teamId]);
+            `,
+            [leagueId, teamId]
+        );
 
         await createNotification(
             targetUserId,
@@ -586,44 +756,62 @@ export const promoteToAdmin = async (req: any, res: any) => {
     }
 };
 
+
+
 // ================================================================
 //                     QUITAR ADMIN
 // ================================================================
 export const demoteAdmin = async (req: any, res: any) => {
     try {
         const adminId = req.user.userId;
-        const leagueId = parseInt(req.params.leagueId);
-        const targetUserId = parseInt(req.params.userId);
+        const leagueId = toPositiveInt(req.params.leagueId);
+        const targetUserId = toPositiveInt(req.params.userId);
+
+        if (!leagueId) {
+            return res.status(400).json({ error: "ID de liga inválido" });
+        }
+        if (!targetUserId) {
+            return res.status(400).json({ error: "ID de usuario inválido" });
+        }
 
         // Verificar admin que ejecuta acción
-        const check = await pool.query(`
+        const check = await pool.query(
+            `
             SELECT 1
             FROM hoopstats.fantasy_league_teams flt
             JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
-            WHERE flt.league_id = $1 AND ft.user_id = $2 AND flt.is_admin = true
-        `, [leagueId, adminId]);
+            WHERE flt.league_id = $1 
+              AND ft.user_id = $2 
+              AND flt.is_admin = true
+            `,
+            [leagueId, adminId]
+        );
 
         if (check.rows.length === 0) {
             return res.status(403).json({ error: "No sos admin de esta liga" });
         }
 
         // Obtener creador
-        const league = await pool.query(`
-            SELECT created_by, name FROM hoopstats.fantasy_leagues WHERE id = $1
-        `, [leagueId]);
+        const league = await pool.query(
+            `SELECT created_by, name FROM hoopstats.fantasy_leagues WHERE id = $1`,
+            [leagueId]
+        );
+
+        if (league.rows.length === 0) {
+            return res.status(404).json({ error: "Liga no encontrada" });
+        }
 
         const creatorId = league.rows[0].created_by;
         const leagueName = league.rows[0].name;
 
-        // El creador NO puede perder admin
         if (targetUserId === creatorId) {
             return res.status(403).json({ error: "No podés quitar admin al creador de la liga" });
         }
 
-        // Obtener team del usuario objetivo
-        const team = await pool.query(`
-            SELECT id FROM hoopstats.fantasy_teams WHERE user_id = $1
-        `, [targetUserId]);
+        const team = await pool.query(
+            `SELECT id FROM hoopstats.fantasy_teams WHERE user_id = $1`,
+            [targetUserId]
+        );
 
         if (team.rows.length === 0) {
             return res.status(404).json({ error: "El usuario no tiene equipo" });
@@ -631,14 +819,14 @@ export const demoteAdmin = async (req: any, res: any) => {
 
         const teamId = team.rows[0].id;
 
-        // Quitar admin
-        await pool.query(`
+        await pool.query(
+            `
             UPDATE hoopstats.fantasy_league_teams
             SET is_admin = false
             WHERE league_id = $1 AND fantasy_team_id = $2
-        `, [leagueId, teamId]);
-
-        const performerName = await getUsername(adminId);
+            `,
+            [leagueId, teamId]
+        );
 
         await createNotification(
             targetUserId,
@@ -655,6 +843,7 @@ export const demoteAdmin = async (req: any, res: any) => {
         return res.status(500).json({ error: "Error al bajar de administrador" });
     }
 };
+
 
 
 // ================================================================
@@ -694,13 +883,19 @@ export const getInvitesForMyLeagues = async (req: any, res: any) => {
     }
 };
 
+
+
 // ================================================================
 //    BORRAR INVITACIÓN (NOTIFICACIÓN) – SOLO CREADOR DE LIGA
 // ================================================================
 export const deleteInviteNotification = async (req: any, res: any) => {
     try {
-        const inviteId = parseInt(req.params.inviteId);
+        const inviteId = toPositiveInt(req.params.inviteId);
         const userId = req.user.userId;
+
+        if (!inviteId) {
+            return res.status(400).json({ error: "ID de invitación inválido" });
+        }
 
         const check = await pool.query(
             `

@@ -7,27 +7,18 @@ import { registerSchema, loginSchema, emailSchema, resetPasswordSchema, updatePr
 
 const router = Router();
 
-// PROFILE
-router.get("/me", auth, me);
-router.put("/auth/me", auth, validate(updateProfileSchema), updateProfile);
-
-
 // AUTH
 router.post("/register", validate(registerSchema), register);
 router.post("/login", validate(loginSchema), login);
 router.post("/refresh", auth, refresh);
 
-// EMAIL VERIFICATION
+// EMAIL
 router.post("/resend-verification", validate(emailSchema), resendVerification);
 router.get("/verify-email", verifyEmail);
-
 
 // PASSWORD RECOVERY
 router.post("/forgot-password", validate(emailSchema), forgotPassword);
 router.post("/reset-password", validate(resetPasswordSchema), resetPassword);
 
-
-// DELETE ACCOUNT
-router.delete("/me", auth, deleteAccount);
 
 export default router;
