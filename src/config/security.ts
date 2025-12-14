@@ -44,8 +44,9 @@ export const configureSecurity = (app: any) => {
                 ],
                 connectSrc: [
                     "'self'",
-                    "capacitor://localhost",
-                    "file:",
+                    "https://localhost",
+                    "https://hoopstats.com.ar",
+                    "https://www.hoopstats.com.ar",
                     "https://hoopstats-backend-production.up.railway.app"
                 ],
                 fontSrc: ["'self'", "https:", "data:"],

@@ -99,6 +99,7 @@ app.use(cors({
         "https://hoopstats.com.ar",
         "https://www.hoopstats.com.ar",
         "https://hoopstats.netlify.app",
+        "https://localhost",
     ],
     credentials: false,
     allowedHeaders: ["Content-Type", "Authorization", "x-cron-key"],
