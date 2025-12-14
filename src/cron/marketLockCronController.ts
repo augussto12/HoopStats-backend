@@ -35,7 +35,7 @@ export const runMarketLockCron = async () => {
         const rows = games.rows;
         console.log("Partidos cargados en nba_games_daily:", rows.length);
 
-        // SOLO partidos que empiecen a partir de las 07:00 ARG
+        // SOLO partidos que empiecen a partir de las 07:00 ARG (solo para elegir el primero)
         const filtered = rows.filter((g: any) => {
             const startARG = getARGDate(new Date(g.start_time));
             return startARG.getHours() >= 7;
@@ -55,15 +55,17 @@ export const runMarketLockCron = async () => {
             console.log("No hay partidos después de las 07:00, no_games_today = true");
         } else {
             const firstGame = filtered[0];
-            const firstStartARG = getARGDate(new Date(firstGame.start_time));
 
-            lockStart = firstStartARG;
+            // TOMAR EL INSTANTE REAL GUARDADO (timestamptz) SIN RECONVERTIR
+            lockStart = new Date(firstGame.start_time);
 
             console.log(
                 "Primer partido del día (>=07):",
                 firstGame.game_id,
                 "start_time ARG:",
-                formatARG(firstStartARG)
+                formatARG(lockStart),
+                "UTC:",
+                lockStart.toISOString()
             );
         }
 
@@ -73,28 +75,28 @@ export const runMarketLockCron = async () => {
         lockEnd.setHours(7, 0, 0, 0);
 
         console.log("Guardando market_lock:", {
-            lockStart: formatARG(lockStart),
-            lockEnd: formatARG(lockEnd),
+            lockStart_ARG: formatARG(lockStart),
+            lockEnd_ARG: formatARG(lockEnd),
             noGamesToday,
         });
 
-        // Idempotencia: si ya hay registro “para hoy”, lo reemplazamos
-        // (sin cambiar schema, borramos por día de lock_start en ARG)
+        // Ahora lock_start es timestamptz: esto sigue OK
         await pool.query(
             `DELETE FROM hoopstats.market_lock
        WHERE (lock_start AT TIME ZONE 'America/Argentina/Buenos_Aires')::date = $1::date`,
             [todayARG]
         );
 
+        // INSERTAR COMO ISO (UTC) para timestamptz
         await pool.query(
             `INSERT INTO hoopstats.market_lock (lock_start, lock_end, no_games_today)
        VALUES ($1, $2, $3)`,
-            [lockStart, lockEnd, noGamesToday]
+            [lockStart.toISOString(), lockEnd.toISOString(), noGamesToday]
         );
 
         console.log("MarketLockCron END OK");
     } catch (err) {
         console.error("Error en MarketLockCron:", err);
-        throw err; 
+        throw err;
     }
 };
