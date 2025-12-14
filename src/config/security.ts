@@ -20,23 +20,42 @@ export const configureSecurity = (app: any) => {
     app.use(
         helmet.contentSecurityPolicy({
             directives: {
-                defaultSrc: ["'self'"],
-                scriptSrc: ["'self'", "'unsafe-inline'"],
-                styleSrc: ["'self'", "'unsafe-inline'"],
-                imgSrc: ["'self'", "data:", "blob:", "https:"],
+                defaultSrc: [
+                    "'self'",
+                    "capacitor://localhost",
+                    "file:"
+                ],
+                scriptSrc: [
+                    "'self'",
+                    "'unsafe-inline'",
+                    "capacitor://localhost"
+                ],
+                styleSrc: [
+                    "'self'",
+                    "'unsafe-inline'",
+                    "capacitor://localhost"
+                ],
+                imgSrc: [
+                    "'self'",
+                    "data:",
+                    "blob:",
+                    "https:",
+                    "capacitor://localhost"
+                ],
                 connectSrc: [
                     "'self'",
-                    "https://hoopstats.com.ar",
-                    "https://www.hoopstats.com.ar",
-                    "https://hoopstats-backend-production.up.railway.app" 
+                    "capacitor://localhost",
+                    "file:",
+                    "https://hoopstats-backend-production.up.railway.app"
                 ],
                 fontSrc: ["'self'", "https:", "data:"],
                 objectSrc: ["'none'"],
                 baseUri: ["'self'"],
-                formAction: ["'self'"],
+                formAction: ["'self'"]
             },
         })
     );
+
 
     app.disable("x-powered-by");
 
