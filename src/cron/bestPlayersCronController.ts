@@ -71,53 +71,54 @@ async function getStatsForGame(gameId: number): Promise<any[]> {
 // ======================================================
 export const runBestPlayersCron = async () => {
     console.log("BestPlayersCron START");
-
     const client = await pool.connect();
 
     try {
-        // “ayer” según Argentina
-        const todayARG = toYYYYMMDD(getARGDate());
-        const yesterdayARG = addDaysStr(todayARG, -1);
+        const nowARG = getARGDate(); // Fecha y hora actual en ARG (ej: 18-12 07:00)
+        const todayStr = toYYYYMMDD(nowARG);
+        const yesterdayStr = addDaysStr(todayStr, -1);
 
-        console.log("BestPlayersCron yesterdayARG:", yesterdayARG);
+        console.log(`Cron running at: ${nowARG.toISOString()} - Target Day: ${yesterdayStr}`);
 
-        // 1) Insertar día si no existe (para AYER ARG)
+        // 1) Seguimos guardando los resultados bajo la fecha de "ayer"
         const dayRes = await client.query(
-            `
-      INSERT INTO hoopstats.days(date)
-      VALUES ($1)
-      ON CONFLICT (date) DO UPDATE SET date = EXCLUDED.date
-      RETURNING id
-      `,
-            [yesterdayARG]
+            `INSERT INTO hoopstats.days(date) VALUES ($1)
+             ON CONFLICT (date) DO UPDATE SET date = EXCLUDED.date
+             RETURNING id`,
+            [yesterdayStr]
         );
-
         const dayId = dayRes.rows[0].id;
 
-        // 2) Traer juegos de ayer + hoy (por si la API corta día distinto)
+        // 2) Pedir juegos de ayer y hoy
         const [gY, gT] = await Promise.all([
-            apiGet("/games", { date: yesterdayARG, season: SEASON }),
-            apiGet("/games", { date: todayARG, season: SEASON }),
+            apiGet("/games", { date: yesterdayStr, season: SEASON }),
+            apiGet("/games", { date: todayStr, season: SEASON }),
         ]);
 
-        let gamesAll: any[] = [...(gY || []), ...(gT || [])];
+        let gamesAll = Array.from(new Map([...gY, ...gT].map(g => [g.id, g])).values());
 
-        // dedupe por id
-        gamesAll = Array.from(new Map(gamesAll.map(g => [g.id, g])).values());
+        // 3) FILTRO CRÍTICO: Definir qué es la "Jornada de Ayer"
+        const gamesYesterdayARG = gamesAll.filter((g: any) => {
+            const start = convertUTCtoARG(g.date?.start);
+            
+            // Definimos los límites:
+            // Inicio: Ayer a las 07:01 AM
+            // Fin: Hoy a las 07:00 AM (incluye la madrugada actual)
+            const limitStart = new Date(nowARG);
+            limitStart.setDate(limitStart.getDate() - 1);
+            limitStart.setHours(7, 0, 0, 0); // Ayer 07:00
 
-        // filtrar los que realmente fueron AYER en ARG
-        const gamesYesterdayARG = gamesAll
-            .map((g: any) => ({
-                ...g,
-                argStart: convertUTCtoARG(g.date?.start),
-            }))
-            .filter((g: any) => g.argStart && toYYYYMMDD(g.argStart) === yesterdayARG);
+            const limitEnd = new Date(nowARG);
+            limitEnd.setHours(7, 0, 0, 0);   // Hoy 07:00
+
+            return start > limitStart && start <= limitEnd;
+        });
 
         const finishedGames = gamesYesterdayARG.filter((g: any) =>
             ["Finished", "Final", "FT"].includes(g?.status?.long)
         );
 
-        console.log("Finished games yesterday(ARG):", finishedGames.length);
+        console.log(`Games found for the session: ${finishedGames.length}`);
 
         if (!finishedGames.length) {
             console.log("BestPlayersCron END (no finished games)");
