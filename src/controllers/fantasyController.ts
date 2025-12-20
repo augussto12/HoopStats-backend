@@ -7,35 +7,30 @@ export const getMyTeam = async (req: any, res: any) => {
     try {
         const userId = req.user.userId;
 
-        // Obtener equipo
+        // 1. Buscamos el equipo
         const teamRes = await pool.query(
-            `SELECT id, user_id, name, total_points, budget 
-             FROM hoopstats.fantasy_teams
-             WHERE user_id = $1`,
+            "SELECT * FROM hoopstats.fantasy_teams WHERE user_id = $1",
             [userId]
         );
 
         if (teamRes.rows.length === 0) {
-            return res.json({
-                team: null,
-                players: []
-            });
+            return res.json({ team: null, players: [] });
         }
 
         const team = teamRes.rows[0];
 
-        // Obtener jugadores
+        // 2. Buscamos los jugadores (AQUÍ ESTÁ EL TRUCO)
         const playersRes = await pool.query(
             `SELECT 
-                fp.id AS fantasy_player_id,
-                fp.player_id,
-                fp.total_pts,
-                fp.price,
-                p.full_name,
-                p.team_id
+                p.id AS player_id, 
+                p.full_name, 
+                fp.price, 
+                fp.total_pts, 
+                fp.is_captain  -- <--- ESTA LÍNEA ES OBLIGATORIA
              FROM hoopstats.fantasy_players fp
-             JOIN hoopstats.players p ON p.id = fp.player_id
-             WHERE fp.fantasy_team_id = $1`,
+             JOIN hoopstats.players p ON fp.player_id = p.id
+             WHERE fp.fantasy_team_id = $1
+             ORDER BY fp.id ASC`,
             [team.id]
         );
 
@@ -43,10 +38,8 @@ export const getMyTeam = async (req: any, res: any) => {
             team,
             players: playersRes.rows
         });
-
     } catch (err) {
-        console.error("Error al obtener equipo:", err);
-        return res.status(500).json({ error: "Error al obtener equipo" });
+        res.status(500).json({ error: "Error al obtener equipo" });
     }
 };
 
@@ -532,3 +525,73 @@ export const applyTrades = async (req: any, res: any) => {
     }
 };
 
+export const setCaptain = async (req: any, res: any) => {
+    try {
+        const userId = req.user.userId;
+        const { teamId, playerId } = req.body; // <--- Recibimos ambos del body
+
+        if (!teamId || !playerId) {
+            return res.status(400).json({ error: "Faltan datos requeridos" });
+        }
+
+        // 1. Verificar mercado bloqueado
+        const locked = await isMarketLocked();
+        if (locked) {
+            return res.status(403).json({
+                error: "Mercado cerrado. No puedes cambiar el capitán mientras hay partidos."
+            });
+        }
+
+        const client = await pool.connect();
+        try {
+            await client.query("BEGIN");
+
+            // 2. Seguridad: Verificar que el equipo pertenezca al usuario
+            const teamCheck = await client.query(
+                `SELECT id FROM hoopstats.fantasy_teams WHERE id = $1 AND user_id = $2`,
+                [teamId, userId]
+            );
+
+            if (teamCheck.rows.length === 0) {
+                return res.status(403).json({ error: "No tienes permiso sobre este equipo" });
+            }
+
+            // 3. Verificar que el jugador pertenezca a ese equipo
+            const playerCheck = await client.query(
+                `SELECT 1 FROM hoopstats.fantasy_players WHERE fantasy_team_id = $1 AND player_id = $2`,
+                [teamId, playerId]
+            );
+
+            if (playerCheck.rows.length === 0) {
+                return res.status(400).json({ error: "El jugador no integra este equipo" });
+            }
+
+            // 4. Operación Atómica: Quitar capitán actual y poner el nuevo
+            await client.query(
+                `UPDATE hoopstats.fantasy_players 
+                 SET is_captain = false 
+                 WHERE fantasy_team_id = $1`,
+                [teamId]
+            );
+
+            await client.query(
+                `UPDATE hoopstats.fantasy_players 
+                 SET is_captain = true 
+                 WHERE fantasy_team_id = $1 AND player_id = $2`,
+                [teamId, playerId]
+            );
+
+            await client.query("COMMIT");
+            return res.json({ message: "Capitán actualizado correctamente" });
+
+        } catch (error) {
+            await client.query("ROLLBACK");
+            throw error;
+        } finally {
+            client.release();
+        }
+    } catch (err) {
+        console.error("Error al asignar capitán:", err);
+        return res.status(500).json({ error: "Error interno del servidor" });
+    }
+};

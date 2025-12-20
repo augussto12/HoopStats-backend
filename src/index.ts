@@ -9,6 +9,7 @@ import { runFantasyCron } from "./cron/fantasyCronController";
 import { runPredictionCron } from "./cron/predictionCronController";
 import { runBestPlayersCron } from "./cron/bestPlayersCronController";
 import { runMarketLockCron } from "./cron/marketLockCronController";
+import { runWeeklyDreamTeamCron } from "./cron/dreamTeamCronController";
 
 import { auth } from "./middlewares/auth";
 import { configureSecurity } from "./config/security";
@@ -35,6 +36,7 @@ import marketLockCronRoutes from "./routes/marketLockCronRoutes";
 import dailyGamesCronRoutes from "./routes/dailyGamesCronRoutes";
 import gameRoutes from "./routes/gamesRoutes"
 import nbaRoutes from "./routes/nbaRoutes"
+import dreamTeamCronRoutes from "./routes/dreamTeamCronRoutes";
 import { requireEmailVerified } from "./middlewares/requireEmailVerified";
 import { requireCronKey } from "./middlewares/requireCronKey";
 
@@ -50,20 +52,29 @@ cron.schedule(
         const client = await pool.connect();
 
         try {
-            // Evita duplicados en múltiples instancias (Railway scale / redeploy)
             const lock = await client.query(
                 "SELECT pg_try_advisory_lock(900001) AS ok"
             );
 
             if (!lock.rows[0].ok) {
-                console.log("🔁 [CRON] Otra instancia ya ejecutó el cron. Skip.");
+                console.log("[CRON] Otra instancia ya ejecutó el cron. Skip.");
                 return;
             }
 
-            const startedAt = new Date();
+            const now = new Date();
+
+            // Obtenemos un string con la fecha/hora actual en ARG
+            const argentinaTime = now.toLocaleString("en-US", {
+                timeZone: "America/Argentina/Buenos_Aires"
+            });
+
+            // Creamos un objeto de fecha basado en ese string para sacar el día real allá
+            const dayOfWeek = new Date(argentinaTime).getDay();
+
+
             console.log(
                 "⏱ [CRON] Ejecutando crons (07:00 AR)...",
-                startedAt.toISOString()
+                now.toISOString()
             );
 
             await runDailyGamesCron();
@@ -72,14 +83,19 @@ cron.schedule(
             await runBestPlayersCron();
             await runMarketLockCron();
 
-            console.log("✅ [CRON] Todos los crons terminaron OK.");
+            // 3. EJECUTAR DREAM TEAM SOLO LOS LUNES (Day 1)
+            if (dayOfWeek === 1) {
+                console.log("[CRON] Confirmado Lunes en Argentina: Ejecutando Dream Team...");
+                await runWeeklyDreamTeamCron();
+            }
+
+            console.log("[CRON] Todos los crons terminaron OK.");
         } catch (err) {
-            console.error("❌ [CRON] Error ejecutando crons:", err);
+            console.error("[CRON] Error ejecutando crons:", err);
         } finally {
-            // Liberar lock SIEMPRE
             await client.query("SELECT pg_advisory_unlock(900001)");
             client.release();
-            console.log("🔓 [CRON] Lock liberado.");
+            console.log("[CRON] Lock liberado.");
         }
     },
     { timezone: "America/Argentina/Buenos_Aires" }
@@ -136,7 +152,7 @@ app.use("/api/cron", requireCronKey, cronRoutes);
 app.use("/api/favorites", auth, requireEmailVerified, favoritesRoutes);
 app.use("/api/best-players", bestPlayersRoutes);
 app.use("/api/best-players-cron", requireCronKey, bestPlayersCronRoutes);
-
+app.use("/api/dream-team-cron", requireCronKey, dreamTeamCronRoutes);
 app.use("/api/market-lock", marketLockRoutes);
 app.use("/api/market-lock-cron", requireCronKey, marketLockCronRoutes);
 app.use("/api/daily-games-cron", requireCronKey, dailyGamesCronRoutes);

@@ -10,6 +10,7 @@ import {
   getTradesToday,
   getMyTransactions,
   applyTrades,
+  setCaptain,
 } from "../controllers/fantasyController";
 
 const router = Router();
@@ -22,6 +23,7 @@ router.put("/update-name", auth, updateTeamName);
 //   JUGADORES (cambios individuales)
 router.post("/add-player/:playerId", auth, addPlayer);
 router.delete("/remove-player/:playerId", auth, removePlayer);
+router.post("/set-captain", auth, setCaptain); 
 
 //   TRADES
 router.post("/apply-trades", auth, applyTrades);
@@ -30,5 +32,4 @@ router.get("/trades/history", auth, getMyTransactions);
 
 //   RANKING GLOBAL
 router.get("/ranking", getRanking);
-
 export default router;

@@ -79,3 +79,60 @@ export const getBestPlayersByDate = async (req: any, res: any) => {
     }
 };
 
+// GET /best-players/team/:teamId/:date
+export const getTeamScoresByDate = async (req: any, res: any) => {
+    try {
+        const { teamId, date } = req.params;
+
+        const scoresRes = await pool.query(`
+            SELECT 
+                p.full_name,
+                h.points_earned as pts
+            FROM hoopstats_test.fantasy_team_player_points_history h
+            JOIN hoopstats_test.players p ON h.player_id = p.id
+            WHERE h.fantasy_team_id = $1 AND h.date = $2
+            ORDER BY h.points_earned DESC
+        `, [teamId, date]);
+
+        const players = scoresRes.rows;
+
+        // Sumamos los puntos_earned que ya tenés en la tabla
+        const total_day_points = players.reduce((sum, p) => sum + parseFloat(p.pts || 0), 0);
+
+        return res.json({
+            date,
+            total_day_points,
+            players: players.map(p => ({
+                ...p,
+                pts: parseFloat(p.pts) // Asegurar que sea número
+            }))
+        });
+
+    } catch (err) {
+        console.error("Error en getTeamScoresByDate:", err);
+        return res.status(500).json({ error: "Error obteniendo puntos históricos." });
+    }
+};
+
+export const getDreamTeam = async (req: any, res: any) => {
+    try {
+        const query = `
+            SELECT 
+                p.full_name, 
+                t.logo AS team_logo, 
+                dt.total_points AS fantasy_points_week
+            FROM hoopstats.weekly_dream_team dt
+            JOIN hoopstats.players p ON dt.player_id = p.id
+            JOIN hoopstats.teams t ON p.team_id = t.id
+            WHERE dt.week_number = (SELECT MAX(week_number) FROM hoopstats.weekly_dream_team)
+              AND dt.year = (SELECT MAX(year) FROM hoopstats.weekly_dream_team)
+            ORDER BY dt.total_points DESC
+        `;
+
+        const result = await pool.query(query);
+        return res.json(result.rows);
+    } catch (err) {
+        console.error("Error al obtener Dream Team:", err);
+        return res.status(500).json({ error: "Error al obtener quinteto" });
+    }
+};

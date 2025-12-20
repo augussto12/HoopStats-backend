@@ -20,7 +20,6 @@ router.use(async (req, res) => {
         const path = req.path;
         const url = `${API_URL}${path}`;
 
-        console.log("NBA PROXY:", url, req.query);
 
         const resp = await axios.get(url, {
             headers: {
