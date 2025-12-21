@@ -48,19 +48,18 @@ app.set("trust proxy", 1);
 app.use(express.json());
 
 
-app.use(
-    cors({
-        origin: [
-            "http://localhost:4200",
-            "https://hoopstats.com.ar",
-            "https://www.hoopstats.com.ar",
-            "https://hoopstats.netlify.app",
-        ],
-        credentials: false,
-        allowedHeaders: ["Content-Type", "Authorization", "x-cron-key"],
-        methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    })
-);
+app.use(cors({
+    origin: [
+        "http://localhost:4200",
+        "https://hoopstats.com.ar",
+        "https://www.hoopstats.com.ar",
+        "https://hoopstats.netlify.app",
+        "https://localhost",
+    ],
+    credentials: false,
+    allowedHeaders: ["Content-Type", "Authorization", "x-cron-key"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+}));
 
 configureSecurity(app);
 
