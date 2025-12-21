@@ -13,7 +13,7 @@ export const createNotification = async (
     try {
         await pool.query(
             `
-            INSERT INTO hoopstats.notifications
+            INSERT INTO notifications
             (user_id, type, title, message, data)
             VALUES ($1, $2, $3, $4, $5)
             `,
@@ -31,7 +31,7 @@ export const getMyNotifications = async (req: any, res: any) => {
         const result = await pool.query(
             `
             SELECT *
-            FROM hoopstats.notifications
+            FROM notifications
             WHERE user_id = $1
               AND is_read = false
             ORDER BY created_at DESC
@@ -56,7 +56,7 @@ export const markAsRead = async (req: any, res: any) => {
 
         const result = await pool.query(
             `
-            UPDATE hoopstats.notifications
+            UPDATE notifications
             SET is_read = true
             WHERE id = $1 AND user_id = $2
             `,
@@ -80,7 +80,7 @@ export const deleteNotification = async (req: any, res: any) => {
         // Solo marcar como leída, NO borrar
         await pool.query(
             `
-            UPDATE hoopstats.notifications
+            UPDATE notifications
             SET is_read = true
             WHERE id = $1 AND user_id = $2
             `,
@@ -102,7 +102,7 @@ export const deleteAllRead = async (req: any, res: any) => {
 
         await pool.query(
             `
-            DELETE FROM hoopstats.notifications
+            DELETE FROM notifications
             WHERE user_id = $1 AND is_read = true
             `,
             [userId]

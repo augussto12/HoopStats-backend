@@ -5,7 +5,7 @@ export const getBestPlayersLatest = async (req: any, res: any) => {
     try {
         const dayRes = await pool.query(`
             SELECT id, date 
-            FROM hoopstats.days 
+            FROM days 
             ORDER BY date DESC 
             LIMIT 1
         `);
@@ -18,7 +18,7 @@ export const getBestPlayersLatest = async (req: any, res: any) => {
 
         const playersRes = await pool.query(`
             SELECT category, player_name AS player, value
-            FROM hoopstats.best_players_by_day
+            FROM best_players_by_day
             WHERE day_id = $1
             ORDER BY CASE
                 WHEN category = 'Puntos' THEN 1
@@ -46,7 +46,7 @@ export const getBestPlayersByDate = async (req: any, res: any) => {
 
         const dayRes = await pool.query(`
             SELECT id
-            FROM hoopstats.days
+            FROM days
             WHERE date = $1
         `, [date]);
 
@@ -58,7 +58,7 @@ export const getBestPlayersByDate = async (req: any, res: any) => {
 
         const playersRes = await pool.query(`
             SELECT category, player_name AS player, value
-            FROM hoopstats.best_players_by_day
+            FROM best_players_by_day
             WHERE day_id = $1
             ORDER BY CASE
                 WHEN category = 'Puntos' THEN 1
@@ -88,8 +88,8 @@ export const getTeamScoresByDate = async (req: any, res: any) => {
             SELECT 
                 p.full_name,
                 h.points_earned as pts
-            FROM hoopstats_test.fantasy_team_player_points_history h
-            JOIN hoopstats_test.players p ON h.player_id = p.id
+            FROM fantasy_team_player_points_history h
+            JOIN players p ON h.player_id = p.id
             WHERE h.fantasy_team_id = $1 AND h.date = $2
             ORDER BY h.points_earned DESC
         `, [teamId, date]);
@@ -121,11 +121,11 @@ export const getDreamTeam = async (req: any, res: any) => {
                 p.full_name, 
                 t.logo AS team_logo, 
                 dt.total_points AS fantasy_points_week
-            FROM hoopstats.weekly_dream_team dt
-            JOIN hoopstats.players p ON dt.player_id = p.id
-            JOIN hoopstats.teams t ON p.team_id = t.id
-            WHERE dt.week_number = (SELECT MAX(week_number) FROM hoopstats.weekly_dream_team)
-              AND dt.year = (SELECT MAX(year) FROM hoopstats.weekly_dream_team)
+            FROM weekly_dream_team dt
+            JOIN players p ON dt.player_id = p.id
+            JOIN teams t ON p.team_id = t.id
+            WHERE dt.week_number = (SELECT MAX(week_number) FROM weekly_dream_team)
+              AND dt.year = (SELECT MAX(year) FROM weekly_dream_team)
             ORDER BY dt.total_points DESC
         `;
 

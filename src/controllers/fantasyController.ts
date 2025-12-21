@@ -9,7 +9,7 @@ export const getMyTeam = async (req: any, res: any) => {
         const userId = req.user.userId;
 
         const teamRes = await pool.query(
-            "SELECT * FROM hoopstats.fantasy_teams WHERE user_id = $1",
+            "SELECT * FROM fantasy_teams WHERE user_id = $1",
             [userId]
         );
 
@@ -26,8 +26,8 @@ export const getMyTeam = async (req: any, res: any) => {
                 fp.price, 
                 fp.total_pts, 
                 fp.is_captain 
-             FROM hoopstats.fantasy_players fp
-             JOIN hoopstats.players p ON fp.player_id = p.id
+             FROM fantasy_players fp
+             JOIN players p ON fp.player_id = p.id
              WHERE fp.fantasy_team_id = $1`,
             [team.id]
         );
@@ -51,7 +51,7 @@ export const createTeam = async (req: any, res: any) => {
         const { name } = req.body;
 
         const exists = await pool.query(
-            `SELECT * FROM hoopstats.fantasy_teams WHERE user_id = $1`,
+            `SELECT * FROM fantasy_teams WHERE user_id = $1`,
             [userId]
         );
 
@@ -60,7 +60,7 @@ export const createTeam = async (req: any, res: any) => {
         }
 
         const team = await pool.query(
-            `INSERT INTO hoopstats.fantasy_teams (user_id, name, total_points, budget)
+            `INSERT INTO fantasy_teams (user_id, name, total_points, budget)
              VALUES ($1, $2, 0, 1000) 
              RETURNING *`,
             [userId, name || "Mi equipo"]
@@ -84,7 +84,7 @@ export const addPlayer = async (req: any, res: any) => {
         const playerId = parseInt(req.params.playerId);
 
         const playerRes = await pool.query(
-            "SELECT id, price FROM hoopstats.players WHERE id = $1",
+            "SELECT id, price FROM players WHERE id = $1",
             [playerId]
         );
 
@@ -96,7 +96,7 @@ export const addPlayer = async (req: any, res: any) => {
         player.price = Number(player.price);
 
         const teamRes = await pool.query(
-            `SELECT id, budget FROM hoopstats.fantasy_teams WHERE user_id = $1`,
+            `SELECT id, budget FROM fantasy_teams WHERE user_id = $1`,
             [userId]
         );
 
@@ -116,7 +116,7 @@ export const addPlayer = async (req: any, res: any) => {
         }
 
         const duplicate = await pool.query(
-            `SELECT 1 FROM hoopstats.fantasy_players
+            `SELECT 1 FROM fantasy_players
              WHERE fantasy_team_id = $1 AND player_id = $2`,
             [team.id, playerId]
         );
@@ -129,7 +129,7 @@ export const addPlayer = async (req: any, res: any) => {
 
         // Insertar jugador
         const insert = await pool.query(
-            `INSERT INTO hoopstats.fantasy_players (fantasy_team_id, player_id, price)
+            `INSERT INTO fantasy_players (fantasy_team_id, player_id, price)
              VALUES ($1, $2, $3)
              RETURNING *`,
             [team.id, playerId, player.price]
@@ -137,7 +137,7 @@ export const addPlayer = async (req: any, res: any) => {
 
         // Actualizar presupuesto
         await pool.query(
-            `UPDATE hoopstats.fantasy_teams
+            `UPDATE fantasy_teams
              SET budget = budget - $1
              WHERE id = $2`,
             [player.price, team.id]
@@ -165,7 +165,7 @@ export const removePlayer = async (req: any, res: any) => {
         const playerId = parseInt(req.params.playerId);
 
         const teamRes = await pool.query(
-            `SELECT id FROM hoopstats.fantasy_teams WHERE user_id = $1`,
+            `SELECT id FROM fantasy_teams WHERE user_id = $1`,
             [userId]
         );
 
@@ -176,7 +176,7 @@ export const removePlayer = async (req: any, res: any) => {
         const teamId = teamRes.rows[0].id;
 
         const player = await pool.query(
-            `SELECT * FROM hoopstats.fantasy_players 
+            `SELECT * FROM fantasy_players 
              WHERE fantasy_team_id = $1 AND player_id = $2`,
             [teamId, playerId]
         );
@@ -191,14 +191,14 @@ export const removePlayer = async (req: any, res: any) => {
 
         // Eliminar jugador
         await pool.query(
-            `DELETE FROM hoopstats.fantasy_players
+            `DELETE FROM fantasy_players
              WHERE fantasy_team_id = $1 AND player_id = $2`,
             [teamId, playerId]
         );
 
         // Devolver presupuesto
         await pool.query(
-            `UPDATE hoopstats.fantasy_teams
+            `UPDATE fantasy_teams
              SET budget = budget + $1
              WHERE id = $2`,
             [price, teamId]
@@ -228,8 +228,8 @@ export const getRanking = async (req: any, res: any) => {
         ft.name,
         ft.total_points,
         u.username
-      FROM hoopstats.fantasy_teams ft
-      JOIN hoopstats.users u ON u.id = ft.user_id
+      FROM fantasy_teams ft
+      JOIN users u ON u.id = ft.user_id
       ORDER BY ft.total_points DESC`
         );
 
@@ -253,7 +253,7 @@ export const updateTeamName = async (req: any, res: any) => {
         }
 
         const teamRes = await pool.query(
-            `SELECT id FROM hoopstats.fantasy_teams WHERE user_id = $1`,
+            `SELECT id FROM fantasy_teams WHERE user_id = $1`,
             [userId]
         );
 
@@ -264,7 +264,7 @@ export const updateTeamName = async (req: any, res: any) => {
         const teamId = teamRes.rows[0].id;
 
         const update = await pool.query(
-            `UPDATE hoopstats.fantasy_teams
+            `UPDATE fantasy_teams
              SET name = $1
              WHERE id = $2
              RETURNING id, name, total_points, budget`,
@@ -289,7 +289,7 @@ export const getTradesToday = async (req: any, res: any) => {
         // Obtener el equipo CON trades_remaining
         const teamRes = await pool.query(
             `SELECT id, trades_remaining
-             FROM hoopstats.fantasy_teams
+             FROM fantasy_teams
              WHERE user_id = $1`,
             [userId]
         );
@@ -322,7 +322,7 @@ export const getMyTransactions = async (req: any, res: any) => {
 
         // Obtener el teamId
         const teamRes = await pool.query(
-            `SELECT id FROM hoopstats.fantasy_teams WHERE user_id = $1`,
+            `SELECT id FROM fantasy_teams WHERE user_id = $1`,
             [userId]
         );
 
@@ -340,8 +340,8 @@ export const getMyTransactions = async (req: any, res: any) => {
                 t.player_id,
                 p.full_name,
                 t.created_at
-            FROM hoopstats.fantasy_trades t
-            JOIN hoopstats.players p ON p.id = t.player_id
+            FROM fantasy_trades t
+            JOIN players p ON p.id = t.player_id
             WHERE t.fantasy_team_id = $1
             ORDER BY t.created_at DESC`,
             [teamId]
@@ -414,7 +414,7 @@ export const applyTrades = async (req: any, res: any) => {
         log("Lock team row (FOR UPDATE NOWAIT)...");
         const teamRes = await client.query(
             `SELECT id, budget, trades_remaining
-       FROM hoopstats.fantasy_teams
+       FROM fantasy_teams
        WHERE user_id = $1
        FOR UPDATE NOWAIT`,
             [userId]
@@ -452,7 +452,7 @@ export const applyTrades = async (req: any, res: any) => {
             log("DROP", playerId);
 
             const delRes = await client.query(
-                `DELETE FROM hoopstats.fantasy_players
+                `DELETE FROM fantasy_players
          WHERE fantasy_team_id = $1 AND player_id = $2
          RETURNING price`,
                 [teamId, playerId]
@@ -462,7 +462,7 @@ export const applyTrades = async (req: any, res: any) => {
                 const price = Number(delRes.rows[0].price);
 
                 await client.query(
-                    `UPDATE hoopstats.fantasy_teams
+                    `UPDATE fantasy_teams
            SET budget = budget + $1
            WHERE id = $2`,
                     [price, teamId]
@@ -471,7 +471,7 @@ export const applyTrades = async (req: any, res: any) => {
                 budget += price;
 
                 await client.query(
-                    `INSERT INTO hoopstats.fantasy_trades
+                    `INSERT INTO fantasy_trades
            (fantasy_team_id, player_id, action, created_at)
            VALUES ($1, $2, 'drop', $3)`,
                     [teamId, playerId, movementTime]
@@ -486,14 +486,14 @@ export const applyTrades = async (req: any, res: any) => {
             log("ADD", playerId);
 
             const dup = await client.query(
-                `SELECT 1 FROM hoopstats.fantasy_players
+                `SELECT 1 FROM fantasy_players
          WHERE fantasy_team_id = $1 AND player_id = $2`,
                 [teamId, playerId]
             );
             if ((dup.rowCount ?? 0) > 0) continue;
 
             const pRes = await client.query(
-                `SELECT price FROM hoopstats.players WHERE id = $1`,
+                `SELECT price FROM players WHERE id = $1`,
                 [playerId]
             );
             if ((pRes.rowCount ?? 0) === 0) continue;
@@ -505,13 +505,13 @@ export const applyTrades = async (req: any, res: any) => {
             }
 
             await client.query(
-                `INSERT INTO hoopstats.fantasy_players (fantasy_team_id, player_id, price)
+                `INSERT INTO fantasy_players (fantasy_team_id, player_id, price)
          VALUES ($1, $2, $3)`,
                 [teamId, playerId, price]
             );
 
             await client.query(
-                `UPDATE hoopstats.fantasy_teams
+                `UPDATE fantasy_teams
          SET budget = budget - $1
          WHERE id = $2`,
                 [price, teamId]
@@ -520,7 +520,7 @@ export const applyTrades = async (req: any, res: any) => {
             budget -= price;
 
             await client.query(
-                `INSERT INTO hoopstats.fantasy_trades
+                `INSERT INTO fantasy_trades
          (fantasy_team_id, player_id, action, created_at)
          VALUES ($1, $2, 'add', $3)`,
                 [teamId, playerId, movementTime]
@@ -528,7 +528,7 @@ export const applyTrades = async (req: any, res: any) => {
         }
 
         await client.query(
-            `UPDATE hoopstats.fantasy_teams
+            `UPDATE fantasy_teams
        SET trades_remaining = trades_remaining - $1
        WHERE id = $2`,
             [nuevosTrades, teamId]
@@ -581,24 +581,24 @@ export const setCaptain = async (req: any, res: any) => {
         const q = `
       WITH team_ok AS (
         SELECT 1
-        FROM hoopstats.fantasy_teams
+        FROM fantasy_teams
         WHERE id = $1 AND user_id = $2
       ),
       player_ok AS (
         SELECT 1
-        FROM hoopstats.fantasy_players
+        FROM fantasy_players
         WHERE fantasy_team_id = $1 AND player_id = $3
           AND EXISTS (SELECT 1 FROM team_ok)
       ),
       clear AS (
-        UPDATE hoopstats.fantasy_players
+        UPDATE fantasy_players
         SET is_captain = false
         WHERE fantasy_team_id = $1
           AND EXISTS (SELECT 1 FROM player_ok)
         RETURNING 1
       ),
       setcap AS (
-        UPDATE hoopstats.fantasy_players
+        UPDATE fantasy_players
         SET is_captain = true
         WHERE fantasy_team_id = $1 AND player_id = $3
           AND EXISTS (SELECT 1 FROM player_ok)

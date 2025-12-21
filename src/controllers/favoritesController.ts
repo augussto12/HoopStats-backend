@@ -6,16 +6,16 @@ export const getFavorites = async (req: any, res: any) => {
 
         const players = await pool.query(
             `SELECT p.*
-             FROM hoopstats.favorite_players fp
-             JOIN hoopstats.players p ON p.id = fp.player_id
+             FROM favorite_players fp
+             JOIN players p ON p.id = fp.player_id
              WHERE fp.user_id = $1`,
             [userId]
         );
 
         const teams = await pool.query(
             `SELECT t.*
-             FROM hoopstats.favorite_teams ft
-             JOIN hoopstats.teams t ON t.id = ft.team_id
+             FROM favorite_teams ft
+             JOIN teams t ON t.id = ft.team_id
              WHERE ft.user_id = $1`,
             [userId]
         );
@@ -49,7 +49,7 @@ export const addFavorite = async (req: any, res: any) => {
         // Verificar que exista el recurso
         if (type === "player") {
             const exists = await pool.query(
-                `SELECT 1 FROM hoopstats.players WHERE id = $1`,
+                `SELECT 1 FROM players WHERE id = $1`,
                 [favId]
             );
             if (exists.rows.length === 0) {
@@ -57,7 +57,7 @@ export const addFavorite = async (req: any, res: any) => {
             }
 
             await pool.query(
-                `INSERT INTO hoopstats.favorite_players (user_id, player_id)
+                `INSERT INTO favorite_players (user_id, player_id)
                  VALUES ($1, $2)
                  ON CONFLICT (user_id, player_id) DO NOTHING`,
                 [userId, favId]
@@ -65,7 +65,7 @@ export const addFavorite = async (req: any, res: any) => {
 
         } else {
             const exists = await pool.query(
-                `SELECT 1 FROM hoopstats.teams WHERE id = $1`,
+                `SELECT 1 FROM teams WHERE id = $1`,
                 [favId]
             );
             if (exists.rows.length === 0) {
@@ -73,7 +73,7 @@ export const addFavorite = async (req: any, res: any) => {
             }
 
             await pool.query(
-                `INSERT INTO hoopstats.favorite_teams (user_id, team_id)
+                `INSERT INTO favorite_teams (user_id, team_id)
                  VALUES ($1, $2)
                  ON CONFLICT (user_id, team_id) DO NOTHING`,
                 [userId, favId]
@@ -106,13 +106,13 @@ export const removeFavorite = async (req: any, res: any) => {
 
         if (type === "player") {
             await pool.query(
-                `DELETE FROM hoopstats.favorite_players
+                `DELETE FROM favorite_players
                  WHERE user_id = $1 AND player_id = $2`,
                 [userId, favId]
             );
         } else {
             await pool.query(
-                `DELETE FROM hoopstats.favorite_teams
+                `DELETE FROM favorite_teams
                  WHERE user_id = $1 AND team_id = $2`,
                 [userId, favId]
             );

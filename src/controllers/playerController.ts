@@ -5,8 +5,8 @@ export const getAllPlayers = async (req: any, res: any) => {
     try {
         const result = await pool.query(`
       SELECT p.id, p.full_name, p.price, p.team_id, t.name AS team_name, t.logo
-      FROM hoopstats.players p
-      JOIN hoopstats.teams t ON t.id = p.team_id
+      FROM players p
+      JOIN teams t ON t.id = p.team_id
       ORDER BY p.full_name ASC
     `);
 
@@ -24,8 +24,8 @@ export const getPlayerById = async (req: any, res: any) => {
 
         const result = await pool.query(`
       SELECT p.id, p.full_name, p.price, p.team_id, t.name AS team_name, t.logo
-      FROM hoopstats.players p
-      JOIN hoopstats.teams t ON t.id = p.team_id
+      FROM players p
+      JOIN teams t ON t.id = p.team_id
       WHERE p.id = $1
     `, [id]);
 
@@ -46,8 +46,8 @@ export const getPlayersByTeam = async (req: any, res: any) => {
 
         const result = await pool.query(`
       SELECT p.id, p.full_name, p.price, p.team_id, t.name AS team_name, t.logo
-      FROM hoopstats.players p
-      JOIN hoopstats.teams t ON t.id = p.team_id
+      FROM players p
+      JOIN teams t ON t.id = p.team_id
       WHERE t.id = $1
       ORDER BY p.full_name ASC
     `, [teamId]);

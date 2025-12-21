@@ -19,7 +19,7 @@ export const isMarketLocked = async (client?: PoolClient): Promise<boolean> => {
 
     const res = await db.query(
         `SELECT lock_start, lock_end
-     FROM hoopstats.market_lock
+     FROM market_lock
      WHERE lock_start::date = $1
      LIMIT 1`,
         [today]

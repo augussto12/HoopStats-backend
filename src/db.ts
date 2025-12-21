@@ -1,91 +1,50 @@
-import { Pool, QueryResult, QueryConfig, QueryArrayResult } from "pg";
+import { Pool } from "pg";
 import dotenv from "dotenv";
 
 dotenv.config();
 
 /* ============================
-      VALIDACIÓN ENV
+    VALIDACIÓN ENV
 ============================ */
 if (!process.env.DATABASE_URL) {
   console.error("❌ ERROR FATAL: Falta la variable DATABASE_URL");
   process.exit(1);
 }
 
+// Obtenemos el esquema del ENV o usamos el default
 const TARGET_SCHEMA = process.env.DB_SCHEMA || "hoopstats";
 
 /* ============================
-      POOL
+    POOL SEGURO
 ============================ */
-const originalPool = new Pool({
+export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: { rejectUnauthorized: false }, // Necesario para Railway
   connectionTimeoutMillis: 5000,
   idleTimeoutMillis: 10000,
-  max: 15,
-  keepAlive: true
+  max: 20,
 });
 
-/**
- * HELPER DE REEMPLAZO
- * Si TARGET_SCHEMA es 'hoopstats_test', cambia todas las menciones 
- * de 'hoopstats.' por 'hoopstats_test.' en el texto de la query.
- */
-const patchQueryText = (text: string | undefined): string | undefined => {
-  if (!text || TARGET_SCHEMA === "hoopstats") return text;
-  // Reemplazo global de "hoopstats." por el esquema de test
-  return text.replace(/hoopstats\./g, `${TARGET_SCHEMA}.`);
-};
-
 /* ============================
-      INTERCEPTOR DE QUERIES
+    CONFIGURACIÓN AUTOMÁTICA
 ============================ */
-// Creamos un proxy para que no tengas que cambiar nada en el resto de tu app
-export const pool = {
-  query: async (text: string | QueryConfig, params?: any[]) => {
-    if (typeof text === "string") {
-      return originalPool.query(patchQueryText(text)!, params);
-    } else {
-      const patched = { ...text, text: patchQueryText(text.text)! };
-      return originalPool.query(patched, params);
-    }
-  },
-
-  connect: async () => {
-    const client = await originalPool.connect();
-    const originalQuery = client.query.bind(client);
-
-    client.query = (text: any, params?: any) => {
-      if (typeof text === "string") return originalQuery(patchQueryText(text)!, params);
-      if (text && typeof text === "object") {
-        const patched = { ...text, text: patchQueryText(text.text)! };
-        return originalQuery(patched, params);
-      }
-      return originalQuery(text, params);
-    };
-
-    return client;
-  },
-
-  // exponer contadores reales
-  get totalCount() { return originalPool.totalCount; },
-  get idleCount() { return originalPool.idleCount; },
-  get waitingCount() { return originalPool.waitingCount; },
-
-  on: originalPool.on.bind(originalPool),
-  end: originalPool.end.bind(originalPool),
-};
-
-
-console.log(`🚀 Modo DB: ${TARGET_SCHEMA === "hoopstats" ? "PRODUCCIÓN" : "TEST (" + TARGET_SCHEMA + ")"}`);
-
+// Cada vez que el Pool crea una nueva conexión, ejecutamos esto automáticamente.
+pool.on('connect', (client) => {
+  // Solo permitimos caracteres alfanuméricos y underscores para el esquema
+  const safeSchema = TARGET_SCHEMA.replace(/[^a-z0-9_]/gi, '');
+  client.query(`SET search_path TO ${safeSchema}, public`)
+    .catch(err => console.error('❌ Error seteando search_path', err));
+});
 /* ============================
-      HANDLERS DE SEGURIDAD
+    HANDLERS DE ERROR
 ============================ */
-originalPool.on("error", (err) => {
-  console.error("🔥 Pool error inesperado:", err);
+pool.on("error", (err) => {
+  console.error("🔥 Error inesperado en el cliente de DB:", err);
 });
 
 process.on("SIGTERM", async () => {
-  await originalPool.end();
+  await pool.end();
   process.exit(0);
 });
+
+console.log(`🚀 Base de datos conectada. Usando esquema: ${TARGET_SCHEMA}`);

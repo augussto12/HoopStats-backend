@@ -37,7 +37,7 @@ export const me = async (req: any, res: any) => {
 
         const result = await pool.query(
             `SELECT id, fullname, username, email, gender, email_verified
-             FROM hoopstats.users
+             FROM users
              WHERE id = $1`,
             [userId]
         );
@@ -67,13 +67,13 @@ export const register = async (req: any, res: any) => {
         const gender = data.gender;
 
         const checkEmail = await pool.query(
-            "SELECT id FROM hoopstats.users WHERE email = $1", [email]
+            "SELECT id FROM users WHERE email = $1", [email]
         );
         if (checkEmail.rows.length > 0)
             return res.status(400).json({ error: "El email ya está registrado" });
 
         const checkUsername = await pool.query(
-            "SELECT id FROM hoopstats.users WHERE username = $1", [username]
+            "SELECT id FROM users WHERE username = $1", [username]
         );
         if (checkUsername.rows.length > 0)
             return res.status(400).json({ error: "El nombre de usuario ya existe" });
@@ -82,7 +82,7 @@ export const register = async (req: any, res: any) => {
         const passwordHash = bcrypt.hashSync(password + pepper, salt);
 
         const result = await pool.query(
-            `INSERT INTO hoopstats.users 
+            `INSERT INTO users 
              (fullname, username, email, password_hash, gender)
              VALUES ($1, $2, $3, $4, $5)
              RETURNING id, fullname, username, email, gender`,
@@ -95,7 +95,7 @@ export const register = async (req: any, res: any) => {
         const tokenHash = bcrypt.hashSync(rawToken, 10);
 
         await pool.query(
-            `UPDATE hoopstats.users 
+            `UPDATE users 
              SET email_verification_token = $1,
                  email_verification_expires = NOW() + INTERVAL '24 hours'
              WHERE id = $2`,
@@ -151,7 +151,7 @@ export const verifyEmail = async (req: any, res: any) => {
 
         const result = await pool.query(
             `SELECT id, email_verification_token, email_verification_expires 
-       FROM hoopstats.users 
+       FROM users 
        WHERE email = $1`,
             [normalizedEmail]
         );
@@ -184,7 +184,7 @@ export const verifyEmail = async (req: any, res: any) => {
         }
 
         await pool.query(
-            `UPDATE hoopstats.users
+            `UPDATE users
        SET email_verified = true,
            email_verification_token = NULL,
            email_verification_expires = NULL
@@ -216,7 +216,7 @@ export const resendVerification = async (req: any, res: any) => {
 
         const result = await pool.query(
             `SELECT id, email_verified 
-             FROM hoopstats.users WHERE email = $1`,
+             FROM users WHERE email = $1`,
             [normalized]
         );
 
@@ -232,14 +232,14 @@ export const resendVerification = async (req: any, res: any) => {
         const tokenHash = bcrypt.hashSync(rawToken, 10);
 
         await pool.query(
-            `UPDATE hoopstats.users 
+            `UPDATE users 
              SET email_verification_token = $1,
                  email_verification_expires = NOW() + INTERVAL '24 hours'
              WHERE id = $2`,
             [tokenHash, user.id]
         );
 
-        const link = `https://hoopstats.com.ar/verify-email?token=${rawToken}&email=${normalized}`;
+        const link = `https://com.ar/verify-email?token=${rawToken}&email=${normalized}`;
         //const link = `http://localhost:4200/verify-email?token=${rawToken}&email=${normalized}`;
 
         await sendEmail(
@@ -275,8 +275,8 @@ export const login = async (req: any, res: any) => {
         const isEmail = normalized.includes("@");
 
         const query = isEmail
-            ? "SELECT * FROM hoopstats.users WHERE email = $1"
-            : "SELECT * FROM hoopstats.users WHERE username = $1";
+            ? "SELECT * FROM users WHERE email = $1"
+            : "SELECT * FROM users WHERE username = $1";
 
         const result = await pool.query(query, [normalized]);
 
@@ -293,7 +293,7 @@ export const login = async (req: any, res: any) => {
             validPass = true;
             const newHash = bcrypt.hashSync(password + pepper, 10);
             await pool.query(
-                "UPDATE hoopstats.users SET password_hash = $1 WHERE id = $2",
+                "UPDATE users SET password_hash = $1 WHERE id = $2",
                 [newHash, user.id]
             );
         }
@@ -340,7 +340,7 @@ export const refresh = async (req: any, res: any) => {
         }
 
         const u = await pool.query(
-            `SELECT email_verified FROM hoopstats.users WHERE id = $1`,
+            `SELECT email_verified FROM users WHERE id = $1`,
             [userId]
         );
 
@@ -369,7 +369,7 @@ export const forgotPassword = async (req: any, res: any) => {
         const normalized = email.trim().toLowerCase();
 
         const result = await pool.query(
-            "SELECT id FROM hoopstats.users WHERE email = $1",
+            "SELECT id FROM users WHERE email = $1",
             [normalized]
         );
 
@@ -382,14 +382,14 @@ export const forgotPassword = async (req: any, res: any) => {
         const tokenHash = bcrypt.hashSync(rawToken, 10);
 
         await pool.query(
-            `UPDATE hoopstats.users 
+            `UPDATE users 
              SET reset_token = $1,
                  reset_expires = NOW() + INTERVAL '15 minutes'
              WHERE id = $2`,
             [tokenHash, user.id]
         );
 
-        const link = `https://hoopstats.com.ar/reset-password?token=${rawToken}`;
+        const link = `https://com.ar/reset-password?token=${rawToken}`;
         //const link = `http://localhost:4200/reset-password?token=${rawToken}`;
 
         await sendEmail(
@@ -421,7 +421,7 @@ export const resetPassword = async (req: any, res: any) => {
 
         const result = await pool.query(
             `SELECT id, reset_token 
-             FROM hoopstats.users
+             FROM users
              WHERE reset_expires > NOW()`
         );
 
@@ -440,7 +440,7 @@ export const resetPassword = async (req: any, res: any) => {
         const newHash = bcrypt.hashSync(password + pepper, 10);
 
         await pool.query(
-            `UPDATE hoopstats.users
+            `UPDATE users
              SET password_hash = $1,
                  reset_token = NULL,
                  reset_expires = NULL

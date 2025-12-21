@@ -15,7 +15,7 @@ export const getDailyGames = async (req: any, res: any) => {
                 away_team,
                 status,
                 raw_json
-             FROM hoopstats.nba_games_daily
+             FROM nba_games_daily
              WHERE date_arg = $1
              ORDER BY start_time ASC`,
             [date]

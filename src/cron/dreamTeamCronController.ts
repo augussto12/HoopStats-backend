@@ -8,7 +8,7 @@ export const runWeeklyDreamTeamCron = async () => {
         // 1. Obtener los 5 mejores jugadores por puntos
         const topPlayersRes = await client.query(`
             SELECT h.player_id, SUM(h.points) as total
-            FROM hoopstats.player_fantasy_points_history h
+            FROM player_fantasy_points_history h
             WHERE h.date_arg >= CURRENT_DATE - INTERVAL '7 days'
             GROUP BY h.player_id
             ORDER BY total DESC 
@@ -26,14 +26,14 @@ export const runWeeklyDreamTeamCron = async () => {
 
         // 3. Limpiar tabla simplificada
         await client.query(`
-            DELETE FROM hoopstats.weekly_dream_team 
+            DELETE FROM weekly_dream_team 
             WHERE week_number = $1 AND year = $2
         `, [wk, yr]);
 
         // 4. Insertar en la tabla simplificada (sin columna position)
         for (const p of topPlayersRes.rows) {
             await client.query(`
-                INSERT INTO hoopstats.weekly_dream_team 
+                INSERT INTO weekly_dream_team 
                 (week_number, year, player_id, total_points)
                 VALUES ($1, $2, $3, $4)
             `, [wk, yr, p.player_id, p.total]);

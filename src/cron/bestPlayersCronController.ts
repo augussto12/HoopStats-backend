@@ -69,20 +69,23 @@ async function getStatsForGame(gameId: number): Promise<any[]> {
 // ======================================================
 //               CRON PRINCIPAL
 // ======================================================
+// ======================================================
+//             CRON PRINCIPAL (VERSIÓN OPTIMIZADA)
+// ======================================================
 export const runBestPlayersCron = async () => {
     console.log("BestPlayersCron START");
     const client = await pool.connect();
 
     try {
-        const nowARG = getARGDate(); // Fecha y hora actual en ARG (ej: 18-12 07:00)
+        const nowARG = getARGDate();
         const todayStr = toYYYYMMDD(nowARG);
         const yesterdayStr = addDaysStr(todayStr, -1);
 
         console.log(`Cron running at: ${nowARG.toISOString()} - Target Day: ${yesterdayStr}`);
 
-        // 1) Seguimos guardando los resultados bajo la fecha de "ayer"
+        // 1) Asegurar que el día existe
         const dayRes = await client.query(
-            `INSERT INTO hoopstats.days(date) VALUES ($1)
+            `INSERT INTO days(date) VALUES ($1)
              ON CONFLICT (date) DO UPDATE SET date = EXCLUDED.date
              RETURNING id`,
             [yesterdayStr]
@@ -97,19 +100,15 @@ export const runBestPlayersCron = async () => {
 
         let gamesAll = Array.from(new Map([...gY, ...gT].map(g => [g.id, g])).values());
 
-        // 3) FILTRO CRÍTICO: Definir qué es la "Jornada de Ayer"
+        // 3) Filtro de jornada ARG (07:00 AM a 07:00 AM)
         const gamesYesterdayARG = gamesAll.filter((g: any) => {
             const start = convertUTCtoARG(g.date?.start);
-            
-            // Definimos los límites:
-            // Inicio: Ayer a las 07:01 AM
-            // Fin: Hoy a las 07:00 AM (incluye la madrugada actual)
             const limitStart = new Date(nowARG);
             limitStart.setDate(limitStart.getDate() - 1);
-            limitStart.setHours(7, 0, 0, 0); // Ayer 07:00
+            limitStart.setHours(7, 0, 0, 0);
 
             const limitEnd = new Date(nowARG);
-            limitEnd.setHours(7, 0, 0, 0);   // Hoy 07:00
+            limitEnd.setHours(7, 0, 0, 0);
 
             return start > limitStart && start <= limitEnd;
         });
@@ -118,18 +117,15 @@ export const runBestPlayersCron = async () => {
             ["Finished", "Final", "FT"].includes(g?.status?.long)
         );
 
-        console.log(`Games found for the session: ${finishedGames.length}`);
-
         if (!finishedGames.length) {
             console.log("BestPlayersCron END (no finished games)");
             return;
         }
 
-        // 3) Obtener estadísticas de cada partido
+        // 4) Obtener estadísticas
         const statsArrays = await Promise.all(
             finishedGames.map((g: any) => getStatsForGame(g.id))
         );
-
         const allStats = statsArrays.flat();
 
         if (!allStats.length) {
@@ -137,8 +133,8 @@ export const runBestPlayersCron = async () => {
             return;
         }
 
-        // 4) Calcular líderes
-        const categories: { key: string; name: string }[] = [
+        // 5) Calcular líderes por categoría
+        const categories = [
             { key: "points", name: "Puntos" },
             { key: "totReb", name: "Rebotes" },
             { key: "assists", name: "Asistencias" },
@@ -148,10 +144,8 @@ export const runBestPlayersCron = async () => {
         ];
 
         const leaders: any[] = [];
-
         for (const c of categories) {
             let best: any = null;
-
             for (const s of allStats) {
                 const statVal = Number(s?.[c.key]) || 0;
                 if (!best || statVal > best.value) {
@@ -163,38 +157,48 @@ export const runBestPlayersCron = async () => {
                     };
                 }
             }
-
             if (best) leaders.push(best);
         }
 
-        // 5) Guardar en DB (transacción)
+        // 6) Guardar en DB con BATCH INSERT (Una sola query para todo)
         await client.query("BEGIN");
 
+        // Limpiamos líderes viejos de ese día
         await client.query(
-            `DELETE FROM hoopstats.best_players_by_day WHERE day_id = $1`,
+            `DELETE FROM best_players_by_day WHERE day_id = $1`,
             [dayId]
         );
 
-        for (const l of leaders) {
-            await client.query(
-                `
-        INSERT INTO hoopstats.best_players_by_day
-        (day_id, category, player_name, player_id, value)
-        VALUES ($1, $2, $3, $4, $5)
-        `,
-                [dayId, l.category, l.player, l.player_id, l.value]
-            );
+        if (leaders.length > 0) {
+            // Construimos los placeholders ($1, $2, $3...) dinámicamente
+            // Cada líder tiene 5 campos: day_id, category, player_name, player_id, value
+            const valuesPlaceholder = leaders.map((_, i) =>
+                `($1, $${i * 4 + 2}, $${i * 4 + 3}, $${i * 4 + 4}, $${i * 4 + 5})`
+            ).join(',');
+
+            const flatValues = leaders.flatMap(l => [
+                l.category,
+                l.player,
+                l.player_id,
+                l.value
+            ]);
+
+            const insertQuery = `
+                INSERT INTO best_players_by_day 
+                (day_id, category, player_name, player_id, value)
+                VALUES ${valuesPlaceholder}
+            `;
+
+            await client.query(insertQuery, [dayId, ...flatValues]);
         }
 
         await client.query("COMMIT");
-
         console.log("BestPlayersCron END OK", { leaders: leaders.length });
+
     } catch (err) {
-        try {
-            await client.query("ROLLBACK");
-        } catch { }
+        if (client) await client.query("ROLLBACK");
         console.error("Error en BestPlayersCron:", err);
-        throw err; 
+        throw err;
     } finally {
         client.release();
     }

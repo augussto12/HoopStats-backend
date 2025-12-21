@@ -9,7 +9,7 @@ export const getAllUsers = async (req: any, res: any) => {
     try {
         const result = await pool.query(
             `SELECT id, fullname, username
-             FROM hoopstats.users
+             FROM users
              ORDER BY username ASC`
         );
 
@@ -29,7 +29,7 @@ export const getMyProfile = async (req: any, res: any) => {
 
         const result = await pool.query(
             `SELECT id, fullname, username, email, gender, created_at, email_verified
-             FROM hoopstats.users 
+             FROM users 
              WHERE id = $1`,
             [userId]
         );
@@ -57,7 +57,7 @@ export const updateProfile = async (req: any, res: any) => {
 
         // 1️⃣ Obtener email actual
         const currentRes = await pool.query(
-            `SELECT email FROM hoopstats.users WHERE id = $1`,
+            `SELECT email FROM users WHERE id = $1`,
             [userId]
         );
 
@@ -74,7 +74,7 @@ export const updateProfile = async (req: any, res: any) => {
 
         // 3️⃣ Actualizar perfil
         const update = await pool.query(
-            `UPDATE hoopstats.users
+            `UPDATE users
              SET fullname = COALESCE($1, fullname),
                  username = COALESCE($2, username),
                  gender   = COALESCE($3, gender),
@@ -116,6 +116,7 @@ export const updateProfile = async (req: any, res: any) => {
 
 
 // Cambiar contraseña
+// CAMBIAR CONTRASEÑA (Refactorizado para mayor claridad)
 export const updatePassword = async (req: any, res: any) => {
     try {
         const { oldPassword, newPassword } = updatePasswordSchema.parse(req.body);
@@ -123,64 +124,64 @@ export const updatePassword = async (req: any, res: any) => {
         const pepper = process.env.PASSWORD_PEPPER || "";
 
         const result = await pool.query(
-            "SELECT password_hash FROM hoopstats.users WHERE id = $1",
+            "SELECT password_hash FROM users WHERE id = $1",
             [userId]
         );
 
         const user = result.rows[0];
-        let valid = false;
+        if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
 
-        if (bcrypt.compareSync(oldPassword + pepper, user.password_hash)) {
-            valid = true;
-        }
+        let valid = bcrypt.compareSync(oldPassword + pepper, user.password_hash);
 
+        // Migración de hash viejo si el pepper no coincide pero la pass sola sí
         if (!valid && bcrypt.compareSync(oldPassword, user.password_hash)) {
             valid = true;
-            const migrated = bcrypt.hashSync(oldPassword + pepper, 10);
-            await pool.query(
-                "UPDATE hoopstats.users SET password_hash = $1 WHERE id = $2",
-                [migrated, userId]
-            );
+            // Opcional: Podrías actualizar el hash aquí mismo, pero como vamos a poner
+            // una contraseña nueva (newPassword), no es estrictamente necesario migrar la vieja.
         }
 
-        if (!valid)
-            return res.status(400).json({ error: "Contraseña incorrecta" });
+        if (!valid) return res.status(400).json({ error: "La contraseña actual es incorrecta" });
 
         const newHash = bcrypt.hashSync(newPassword + pepper, 10);
-
         await pool.query(
-            "UPDATE hoopstats.users SET password_hash = $1 WHERE id = $2",
+            "UPDATE users SET password_hash = $1 WHERE id = $2",
             [newHash, userId]
         );
 
-        return res.json({ message: "Contraseña actualizada" });
+        return res.json({ message: "Contraseña actualizada correctamente" });
 
     } catch (err: any) {
-        if (err.name === "ZodError")
-            return res.status(400).json({ error: err.errors[0].message });
-
+        if (err.name === "ZodError") return res.status(400).json({ error: err.errors[0].message });
         return res.status(500).json({ error: "Error al cambiar contraseña" });
     }
 };
 
-// ELIMINAR CUENTA
+// ELIMINAR CUENTA (Con Transacción para evitar datos huérfanos)
 export const deleteAccount = async (req: any, res: any) => {
+    const client = await pool.connect();
     try {
         const userId = req.user.userId;
 
-        // Eliminamos favoritos
-        await pool.query(`DELETE FROM hoopstats.favorite_players WHERE user_id = $1`, [userId]);
-        await pool.query(`DELETE FROM hoopstats.favorite_teams WHERE user_id = $1`, [userId]);
+        await client.query("BEGIN");
 
-        // Eliminamos predicciones
-        await pool.query(`DELETE FROM hoopstats.predicciones WHERE user_id = $1`, [userId]);
+        // Borramos todo lo relacionado en orden
+        await client.query(`DELETE FROM favorite_players WHERE user_id = $1`, [userId]);
+        await client.query(`DELETE FROM favorite_teams WHERE user_id = $1`, [userId]);
+        await client.query(`DELETE FROM predicciones WHERE user_id = $1`, [userId]);
 
-        // Finalmente eliminamos usuario
-        await pool.query(`DELETE FROM hoopstats.users WHERE id = $1`, [userId]);
+        // Si tienes equipo de Fantasy, también deberías borrarlo o se romperá la FK
+        // await client.query(`DELETE FROM fantasy_teams WHERE user_id = $1`, [userId]);
 
+        await client.query(`DELETE FROM users WHERE id = $1`, [userId]);
+
+        await client.query("COMMIT");
         return res.json({ message: "Cuenta eliminada correctamente" });
+
     } catch (err) {
+        await client.query("ROLLBACK");
         console.error("Error al eliminar cuenta:", err);
-        return res.status(500).json({ error: "No se pudo eliminar la cuenta" });
+        return res.status(500).json({ error: "No se pudo eliminar la cuenta por un error de integridad." });
+    } finally {
+        client.release();
     }
 };

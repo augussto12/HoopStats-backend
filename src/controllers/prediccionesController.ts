@@ -45,7 +45,7 @@ export const createPrediction = async (req: any, res: any) => {
 
         // Evitar duplicado
         const exists = await pool.query(
-            `SELECT id FROM hoopstats.predicciones 
+            `SELECT id FROM predicciones 
              WHERE user_id = $1 AND game_id = $2`,
             [userId, gameId]
         );
@@ -57,7 +57,7 @@ export const createPrediction = async (req: any, res: any) => {
         }
 
         const insert = await pool.query(
-            `INSERT INTO hoopstats.predicciones
+            `INSERT INTO predicciones
                 (user_id, game_id, game_date, home_team, visitor_team,
                  puntos_local_prediccion, puntos_visitante_prediccion, procesada)
              VALUES ($1, $2, $3, $4, $5, $6, $7, false)
@@ -104,7 +104,7 @@ export const getMyPredictions = async (req: any, res: any) => {
                 procesada,
                 created_at,
                 TO_CHAR(game_date, 'YYYY-MM-DD') AS game_date
-             FROM hoopstats.predicciones
+             FROM predicciones
              WHERE user_id = $1
              ORDER BY created_at DESC`,
             [userId]
@@ -142,7 +142,7 @@ export const getPredictionForGame = async (req: any, res: any) => {
                 procesada,
                 created_at,
                 TO_CHAR(game_date, 'YYYY-MM-DD') AS game_date
-             FROM hoopstats.predicciones
+             FROM predicciones
              WHERE user_id = $1 AND game_id = $2`,
             [userId, gameId]
         );
@@ -166,7 +166,7 @@ export const deletePrediction = async (req: any, res: any) => {
         }
 
         const result = await pool.query(
-            `DELETE FROM hoopstats.predicciones
+            `DELETE FROM predicciones
              WHERE id = $1 AND user_id = $2
              RETURNING id`,
             [id, userId]
@@ -193,7 +193,7 @@ export const getPredictionsRanking = async (req: any, res: any) => {
             `SELECT 
                 u.username,
                 u.total_prediction_points
-             FROM hoopstats.users u
+             FROM users u
              ORDER BY u.total_prediction_points DESC`
         );
 

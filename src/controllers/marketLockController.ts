@@ -6,7 +6,7 @@ export const getMarketLock = async (req: any, res: any) => {
     try {
         const r = await pool.query(`
       SELECT lock_start, lock_end, no_games_today
-      FROM hoopstats.market_lock
+      FROM market_lock
       ORDER BY lock_start DESC
       LIMIT 1
     `);

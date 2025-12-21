@@ -21,10 +21,10 @@ export const getGroupedTradesByTeam = async (req: any, res: any) => {
                     FILTER (WHERE t.action = 'add')  AS entran,
                 ARRAY_AGG(p.full_name ORDER BY p.full_name) 
                     FILTER (WHERE t.action = 'drop') AS salen
-            FROM hoopstats.fantasy_trades t
-            JOIN hoopstats.players p ON p.id = t.player_id
-            JOIN hoopstats.fantasy_teams ft ON ft.id = t.fantasy_team_id
-            JOIN hoopstats.users u ON u.id = ft.user_id
+            FROM fantasy_trades t
+            JOIN players p ON p.id = t.player_id
+            JOIN fantasy_teams ft ON ft.id = t.fantasy_team_id
+            JOIN users u ON u.id = ft.user_id
             WHERE t.fantasy_team_id = $1
             GROUP BY t.created_at, ft.name, u.username
             ORDER BY t.created_at DESC
@@ -62,11 +62,11 @@ export const getGroupedTradesByLeague = async (req: any, res: any) => {
                     FILTER (WHERE t.action = 'add')  AS entran,
                 ARRAY_AGG(p.full_name ORDER BY p.full_name)
                     FILTER (WHERE t.action = 'drop') AS salen
-            FROM hoopstats.fantasy_trades t
-            JOIN hoopstats.players p ON p.id = t.player_id
-            JOIN hoopstats.fantasy_teams ft ON ft.id = t.fantasy_team_id
-            JOIN hoopstats.users u ON u.id = ft.user_id
-            JOIN hoopstats.fantasy_league_teams flt
+            FROM fantasy_trades t
+            JOIN players p ON p.id = t.player_id
+            JOIN fantasy_teams ft ON ft.id = t.fantasy_team_id
+            JOIN users u ON u.id = ft.user_id
+            JOIN fantasy_league_teams flt
                 ON flt.fantasy_team_id = ft.id
             WHERE flt.league_id = $1
             GROUP BY t.created_at, ft.name, u.username
@@ -102,9 +102,9 @@ export const getLeagueMarket = async (req: any, res: any) => {
                 p.full_name,
                 SUM(CASE WHEN t.action = 'add'  THEN 1 ELSE 0 END) AS total_adds,
                 SUM(CASE WHEN t.action = 'drop' THEN 1 ELSE 0 END) AS total_drops
-            FROM hoopstats.fantasy_trades t
-            JOIN hoopstats.players p ON p.id = t.player_id
-            JOIN hoopstats.fantasy_league_teams flt 
+            FROM fantasy_trades t
+            JOIN players p ON p.id = t.player_id
+            JOIN fantasy_league_teams flt 
                 ON flt.fantasy_team_id = t.fantasy_team_id
             WHERE flt.league_id = $1
             GROUP BY p.full_name

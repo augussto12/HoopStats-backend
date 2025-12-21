@@ -16,17 +16,18 @@ function toYYYYMMDD(d: Date) {
 
 export const runMarketLockCron = async () => {
   console.log("MarketLockCron START");
+  // Pedimos una conexión específica del pool para la transacción
+  const client = await pool.connect();
 
   try {
     const todayARG = toYYYYMMDD(getARGDate());
     console.log("MarketLockCron para día ARG:", todayARG);
 
-    // Traemos el primer partido cuyo start_time (HORA ARG) sea >= 07:00
-    // start_time es timestamp sin tz, lo interpretamos como "hora Argentina".
-    const firstGameRes = await pool.query(
+    // 1) Buscamos el primer partido (Lógica de fechas intacta)
+    const firstGameRes = await client.query(
       `
       SELECT game_id, start_time::text AS start_time_text
-      FROM hoopstats.nba_games_daily
+      FROM nba_games_daily
       WHERE date_arg = $1
         AND start_time::time >= time '07:00'
       ORDER BY start_time ASC
@@ -36,8 +37,6 @@ export const runMarketLockCron = async () => {
     );
 
     let noGamesToday = false;
-
-    // Estos son "wall time" ARG (timestamp sin tz, en texto)
     let lockStartArg: string;
 
     if (firstGameRes.rowCount === 0) {
@@ -54,8 +53,8 @@ export const runMarketLockCron = async () => {
       );
     }
 
-    // lockEnd: día siguiente a las 07:00 ARG (calculado sin depender del timezone del server)
-    const lockEndRes = await pool.query(
+    // 2) Calculamos lockEnd (Lógica de fechas intacta)
+    const lockEndRes = await client.query(
       `
       SELECT ((($1::timestamp)::date + 1) + time '07:00')::timestamp AS lock_end_arg
       `,
@@ -70,19 +69,23 @@ export const runMarketLockCron = async () => {
       noGamesToday,
     });
 
-    // borrar el registro del día (comparando fecha en ARG)
-    await pool.query(
+    // --- BLOQUE TRANSACCIONAL ---
+    // Aquí es donde blindamos la operación
+    await client.query("BEGIN");
+
+    // Borrar el registro del día
+    await client.query(
       `
-      DELETE FROM hoopstats.market_lock
+      DELETE FROM market_lock
       WHERE (lock_start AT TIME ZONE 'America/Argentina/Buenos_Aires')::date = $1::date
       `,
       [todayARG]
     );
 
-    // INSERT: convertir esos timestamps "ARG" a timestamptz correctamente
-    await pool.query(
+    // Insertar el nuevo bloqueo
+    await client.query(
       `
-      INSERT INTO hoopstats.market_lock (lock_start, lock_end, no_games_today)
+      INSERT INTO market_lock (lock_start, lock_end, no_games_today)
       VALUES (
         ($1::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires'),
         ($2::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires'),
@@ -92,9 +95,17 @@ export const runMarketLockCron = async () => {
       [lockStartArg, lockEndArg, noGamesToday]
     );
 
+    await client.query("COMMIT");
+    // ----------------------------
+
     console.log("MarketLockCron END OK");
   } catch (err) {
+    // Si algo falló, deshacemos el DELETE para que el mercado no quede abierto
+    await client.query("ROLLBACK");
     console.error("Error en MarketLockCron:", err);
     throw err;
+  } finally {
+    // Devolvemos la conexión al pool
+    client.release();
   }
 };

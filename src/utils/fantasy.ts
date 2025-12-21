@@ -45,10 +45,13 @@ import { pool } from "../db";
 
 
 export function calcFantasyPoints(s: any): number {
+    // Helper interno para limpiar valores de la API
     const n = (v: any) => (v == null || v === "" ? 0 : Number(v));
 
+    // Limpieza de minutos (maneja strings o números)
     const minutes = typeof s.min === "string" ? parseInt(s.min, 10) : n(s.min);
 
+    // Limpieza de Plus/Minus (quita el "+" si existe)
     const pm =
         typeof s.plusMinus === "string"
             ? Number(s.plusMinus.replace("+", ""))
@@ -89,16 +92,16 @@ export function calcFantasyPoints(s: any): number {
         pm * 0.1 +
         pFouls * -0.25;
 
-    // Foul-out penalty (pro)
+    // Penalidad por expulsión (6 faltas)
     if (pFouls >= 6) fp += -1.5;
 
-    // Double/Triple Double
+    // Lógica de Double/Triple Double
     const cats = [points, totReb, assists, steals, blocks];
     const count10 = cats.filter(v => v >= 10).length;
     if (count10 >= 3) fp += 8;
     else if (count10 >= 2) fp += 5;
 
-    // regla min
+    // Regla de minutos mínimos (Si no jugó al menos 2 min, 0 puntos)
     if (!Number.isFinite(minutes) || minutes < 2) return 0;
 
     return Number(fp.toFixed(2));
@@ -117,16 +120,27 @@ export function playedMoreThanOneMinute(s: any): boolean {
 
 
 
-export async function getStatusId(scope: string, code: string) {
-    const res = await pool.query(
-        `SELECT id FROM hoopstats.fantasy_league_statuses
-         WHERE scope = $1 AND code = $2`,
-        [scope, code]
-    );
-    return res.rows[0]?.id;
+export async function getStatusId(scope: string, code: string): Promise<number | null> {
+    try {
+        const res = await pool.query(
+            `SELECT id FROM fantasy_league_statuses
+             WHERE scope = $1 AND code = $2`,
+            [scope, code]
+        );
+        // Usamos el encadenamiento opcional ?. por si no hay resultados
+        return res.rows[0]?.id || null;
+    } catch (err) {
+        console.error("Error en getStatusId:", err);
+        return null;
+    }
 }
 
-export async function getUsername(userId: number) {
-    const res = await pool.query(`SELECT username FROM hoopstats.users WHERE id = $1`, [userId]);
-    return res.rows.length ? res.rows[0].username : null;
+export async function getUsername(userId: number): Promise<string | null> {
+    try {
+        const res = await pool.query(`SELECT username FROM users WHERE id = $1`, [userId]);
+        return res.rows.length ? res.rows[0].username : null;
+    } catch (err) {
+        console.error("Error en getUsername:", err);
+        return null;
+    }
 }

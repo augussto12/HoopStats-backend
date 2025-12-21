@@ -96,30 +96,40 @@ export const configureSecurity = (app: any) => {
     });
 
     /* =============================
-       5) SANITIZACIÓN XSS COMPLETA
+        5) SANITIZACIÓN XSS COMPLETA (Recursiva)
     ============================== */
-    const sanitizeValue = (value: any) => {
+    const sanitizeValue = (value: any): any => {
+        // 1. Si es un string, lo limpiamos con la librería
         if (typeof value === "string") {
             return sanitizeHtml(value, {
                 allowedTags: [],
                 allowedAttributes: {}
             });
         }
+
+        // 2. Si es un array, limpiamos cada elemento uno por uno
+        if (Array.isArray(value)) {
+            return value.map(item => sanitizeValue(item));
+        }
+
+        // 3. Si es un objeto, limpiamos todas sus propiedades por dentro
+        if (typeof value === "object" && value !== null) {
+            const cleanObj: any = {};
+            for (const key in value) {
+                cleanObj[key] = sanitizeValue(value[key]);
+            }
+            return cleanObj;
+        }
+
+        // 4. Si es número, boolean o null, lo dejamos igual
         return value;
     };
 
     app.use((req: Request, _res: Response, next: NextFunction) => {
-        if (req.body)
-            for (const k in req.body)
-                req.body[k] = sanitizeValue(req.body[k]);
-
-        if (req.query)
-            for (const k in req.query)
-                req.query[k] = sanitizeValue(req.query[k]);
-
-        if (req.params)
-            for (const k in req.params)
-                req.params[k] = sanitizeValue(req.params[k]);
+        // Ahora aplicamos la función a todo el objeto, no solo al primer nivel
+        if (req.body) req.body = sanitizeValue(req.body);
+        if (req.query) req.query = sanitizeValue(req.query);
+        if (req.params) req.params = sanitizeValue(req.params);
 
         next();
     });

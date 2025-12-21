@@ -5,7 +5,7 @@ export const getAllTeams = async (req: any, res: any) => {
     try {
         const result = await pool.query(`
       SELECT id, name, logo
-      FROM hoopstats.teams
+      FROM teams
       ORDER BY name ASC
     `);
 
@@ -22,7 +22,7 @@ export const getTeamById = async (req: any, res: any) => {
         const id = parseInt(req.params.id);
 
         const result = await pool.query(
-            `SELECT id, name, logo FROM hoopstats.teams WHERE id = $1`,
+            `SELECT id, name, logo FROM teams WHERE id = $1`,
             [id]
         );
 

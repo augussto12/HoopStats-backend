@@ -29,7 +29,7 @@ export const createLeague = async (req: any, res: any) => {
         // LIMITE DE LIGAS
         const countRes = await pool.query(
             `SELECT COUNT(*) 
-             FROM hoopstats.fantasy_leagues 
+             FROM fantasy_leagues 
              WHERE created_by = $1`,
             [userId]
         );
@@ -44,7 +44,7 @@ export const createLeague = async (req: any, res: any) => {
 
         // CREAR LIGA
         const leagueRes = await pool.query(
-            `INSERT INTO hoopstats.fantasy_leagues 
+            `INSERT INTO fantasy_leagues 
                 (name, description, created_by, privacy, max_teams, status_id)
              VALUES ($1, $2, $3, $4, $5, $6)
              RETURNING id, name, description, privacy, max_teams, created_by, status_id`,
@@ -65,10 +65,10 @@ export const createLeague = async (req: any, res: any) => {
         // AUTO-ASIGNAR ADMIN
         await pool.query(
             `
-            INSERT INTO hoopstats.fantasy_league_teams 
+            INSERT INTO fantasy_league_teams 
                 (league_id, fantasy_team_id, is_admin, status_id)
             SELECT $1, ft.id, true, $2
-            FROM hoopstats.fantasy_teams ft
+            FROM fantasy_teams ft
             WHERE ft.user_id = $3
             `,
             [leagueId, membershipActiveId, userId]
@@ -107,14 +107,14 @@ export const getAllLeagues = async (req: any, res: any) => {
 
                 (
                     SELECT COUNT(*)
-                    FROM hoopstats.fantasy_league_teams flt
+                    FROM fantasy_league_teams flt
                     WHERE flt.league_id = fl.id
                 ) AS current_users
 
-            FROM hoopstats.fantasy_leagues fl
-            JOIN hoopstats.users u 
+            FROM fantasy_leagues fl
+            JOIN users u 
                 ON u.id = fl.created_by
-            JOIN hoopstats.fantasy_league_statuses sl
+            JOIN fantasy_league_statuses sl
                 ON sl.id = fl.status_id
                 AND sl.scope = 'league'
 
@@ -145,8 +145,8 @@ export const updateLeague = async (req: any, res: any) => {
         const check = await pool.query(
             `
             SELECT 1
-            FROM hoopstats.fantasy_league_teams flt
-            JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
+            FROM fantasy_league_teams flt
+            JOIN fantasy_teams ft ON ft.id = flt.fantasy_team_id
             WHERE flt.league_id = $1 AND flt.is_admin = true AND ft.user_id = $2
             `,
             [leagueId, adminId]
@@ -158,7 +158,7 @@ export const updateLeague = async (req: any, res: any) => {
 
         await pool.query(
             `
-            UPDATE hoopstats.fantasy_leagues
+            UPDATE fantasy_leagues
             SET name = COALESCE($1, name),
                 description = COALESCE($2, description),
                 privacy = COALESCE($3, privacy)
@@ -199,15 +199,15 @@ export const getMyLeagues = async (req: any, res: any) => {
 
                 (
                     SELECT COUNT(*) + 1
-                    FROM hoopstats.fantasy_league_teams flt2
+                    FROM fantasy_league_teams flt2
                     WHERE flt2.league_id = fl.id
                     AND flt2.points > flt.points
                 ) AS my_position
 
-            FROM hoopstats.fantasy_league_teams flt
-            JOIN hoopstats.fantasy_leagues fl ON fl.id = flt.league_id
-            JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
-            JOIN hoopstats.fantasy_league_statuses sl ON sl.id = flt.status_id
+            FROM fantasy_league_teams flt
+            JOIN fantasy_leagues fl ON fl.id = flt.league_id
+            JOIN fantasy_teams ft ON ft.id = flt.fantasy_team_id
+            JOIN fantasy_league_statuses sl ON sl.id = flt.status_id
             WHERE ft.user_id = $1
             ORDER BY fl.created_at DESC
         `, [userId]);
@@ -254,8 +254,8 @@ export const transferAdmin = async (req: any, res: any) => {
         // 1. Validar que el usuario que hace la acción es admin
         const current = await pool.query(`
             SELECT ft.id AS team_id
-            FROM hoopstats.fantasy_league_teams flt
-            JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
+            FROM fantasy_league_teams flt
+            JOIN fantasy_teams ft ON ft.id = flt.fantasy_team_id
             WHERE flt.league_id = $1 AND ft.user_id = $2 AND flt.is_admin = true
         `, [leagueId, adminId]);
 
@@ -266,8 +266,8 @@ export const transferAdmin = async (req: any, res: any) => {
         // 2. Verificar si el target actualmente es admin
         const target = await pool.query(`
             SELECT flt.is_admin
-            FROM hoopstats.fantasy_league_teams flt
-            JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
+            FROM fantasy_league_teams flt
+            JOIN fantasy_teams ft ON ft.id = flt.fantasy_team_id
             WHERE flt.league_id = $1 AND ft.user_id = $2
         `, [leagueId, targetUserId]);
 
@@ -281,9 +281,9 @@ export const transferAdmin = async (req: any, res: any) => {
         const newStatus = !isCurrentlyAdmin;
 
         await pool.query(`
-            UPDATE hoopstats.fantasy_league_teams flt
+            UPDATE fantasy_league_teams flt
             SET is_admin = $3
-            FROM hoopstats.fantasy_teams ft
+            FROM fantasy_teams ft
             WHERE flt.league_id = $1
             AND ft.id = flt.fantasy_team_id
             AND ft.user_id = $2
@@ -292,7 +292,7 @@ export const transferAdmin = async (req: any, res: any) => {
 
         // 4. Obtener nombre de liga
         const leagueRes = await pool.query(`
-            SELECT name FROM hoopstats.fantasy_leagues WHERE id = $1
+            SELECT name FROM fantasy_leagues WHERE id = $1
         `, [leagueId]);
 
         const leagueName = leagueRes.rows[0].name;
@@ -343,8 +343,8 @@ export const inactivateMember = async (req: any, res: any) => {
 
         const check = await pool.query(`
             SELECT 1
-            FROM hoopstats.fantasy_league_teams flt
-            JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
+            FROM fantasy_league_teams flt
+            JOIN fantasy_teams ft ON ft.id = flt.fantasy_team_id
             WHERE flt.league_id = $1 AND flt.is_admin = true AND ft.user_id = $2
         `, [leagueId, adminId]);
 
@@ -355,16 +355,16 @@ export const inactivateMember = async (req: any, res: any) => {
         const inactiveId = await getStatusId("membership", "inactive");
 
         await pool.query(`
-            UPDATE hoopstats.fantasy_league_teams flt
+            UPDATE fantasy_league_teams flt
             SET status_id = $1
-            FROM hoopstats.fantasy_teams ft
+            FROM fantasy_teams ft
             WHERE flt.fantasy_team_id = ft.id
             AND ft.user_id = $2
             AND flt.league_id = $3
         `, [inactiveId, userId, leagueId]);
 
         // → Notificación
-        const leagueRes = await pool.query(`SELECT name FROM hoopstats.fantasy_leagues WHERE id = $1`, [leagueId]);
+        const leagueRes = await pool.query(`SELECT name FROM fantasy_leagues WHERE id = $1`, [leagueId]);
         const leagueName = leagueRes.rows[0].name;
 
         await createNotification(
@@ -402,10 +402,10 @@ export const getLeagueTeams = async (req: any, res: any) => {
                 flt.points,
                 sl.code AS status,
                 sl.description AS status_desc
-            FROM hoopstats.fantasy_league_teams flt
-            JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
-            JOIN hoopstats.users u ON u.id = ft.user_id
-            JOIN hoopstats.fantasy_league_statuses sl ON sl.id = flt.status_id
+            FROM fantasy_league_teams flt
+            JOIN fantasy_teams ft ON ft.id = flt.fantasy_team_id
+            JOIN users u ON u.id = ft.user_id
+            JOIN fantasy_league_statuses sl ON sl.id = flt.status_id
             WHERE flt.league_id = $1
             ORDER BY flt.points DESC
             `,
@@ -436,9 +436,9 @@ export const getLeagueRanking = async (req: any, res: any) => {
                 ft.name AS team_name,
                 u.username AS owner,
                 ltu.points AS league_points
-            FROM hoopstats.fantasy_league_teams ltu
-            JOIN hoopstats.fantasy_teams ft ON ft.id = ltu.fantasy_team_id
-            JOIN hoopstats.users u ON u.id = ft.user_id
+            FROM fantasy_league_teams ltu
+            JOIN fantasy_teams ft ON ft.id = ltu.fantasy_team_id
+            JOIN users u ON u.id = ft.user_id
             WHERE ltu.league_id = $1
             AND ltu.status_id = $2
             ORDER BY ltu.points DESC
@@ -465,7 +465,7 @@ export const getMyCreatedLeagues = async (req: any, res: any) => {
         const leaguesRes = await pool.query(
             `
             SELECT *
-            FROM hoopstats.fantasy_leagues
+            FROM fantasy_leagues
             WHERE created_by = $1
             ORDER BY created_at DESC
             `,
@@ -487,10 +487,10 @@ export const getMyCreatedLeagues = async (req: any, res: any) => {
                     flt.is_admin,
                     sl.code AS status,
                     sl.description AS status_desc
-                FROM hoopstats.fantasy_league_teams flt
-                JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
-                JOIN hoopstats.users u ON u.id = ft.user_id
-                JOIN hoopstats.fantasy_league_statuses sl ON sl.id = flt.status_id
+                FROM fantasy_league_teams flt
+                JOIN fantasy_teams ft ON ft.id = flt.fantasy_team_id
+                JOIN users u ON u.id = ft.user_id
+                JOIN fantasy_league_statuses sl ON sl.id = flt.status_id
                 WHERE flt.league_id = $1
                 `,
                 [leagueId]
@@ -514,9 +514,9 @@ export const getMyCreatedLeagues = async (req: any, res: any) => {
                     u.username,
                     sl.code AS status,
                     sl.description AS status_desc
-                FROM hoopstats.fantasy_league_invites i
-                JOIN hoopstats.users u ON u.id = i.invited_user_id
-                JOIN hoopstats.fantasy_league_statuses sl ON sl.id = i.status_id
+                FROM fantasy_league_invites i
+                JOIN users u ON u.id = i.invited_user_id
+                JOIN fantasy_league_statuses sl ON sl.id = i.status_id
                 WHERE i.league_id = $1
                   AND sl.code IN ('pending', 'rejected')
                 `,
@@ -560,9 +560,9 @@ export const getLeaguesWhereImAdmin = async (req: any, res: any) => {
         const leaguesRes = await pool.query(
             `
             SELECT fl.*
-            FROM hoopstats.fantasy_leagues fl
-            JOIN hoopstats.fantasy_league_teams flt ON flt.league_id = fl.id
-            JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
+            FROM fantasy_leagues fl
+            JOIN fantasy_league_teams flt ON flt.league_id = fl.id
+            JOIN fantasy_teams ft ON ft.id = flt.fantasy_team_id
             WHERE ft.user_id = $1
               AND flt.is_admin = true
             ORDER BY fl.created_at DESC
@@ -585,10 +585,10 @@ export const getLeaguesWhereImAdmin = async (req: any, res: any) => {
                     flt.is_admin,
                     sl.code AS status,
                     sl.description AS status_desc
-                FROM hoopstats.fantasy_league_teams flt
-                JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
-                JOIN hoopstats.users u ON u.id = ft.user_id
-                JOIN hoopstats.fantasy_league_statuses sl ON sl.id = flt.status_id
+                FROM fantasy_league_teams flt
+                JOIN fantasy_teams ft ON ft.id = flt.fantasy_team_id
+                JOIN users u ON u.id = ft.user_id
+                JOIN fantasy_league_statuses sl ON sl.id = flt.status_id
                 WHERE flt.league_id = $1
                   AND sl.code IN ('active', 'pending', 'inactive')
                 `,
@@ -613,9 +613,9 @@ export const getLeaguesWhereImAdmin = async (req: any, res: any) => {
                     u.username,
                     sl.code AS status,
                     sl.description AS status_desc
-                FROM hoopstats.fantasy_league_invites i
-                JOIN hoopstats.users u ON u.id = i.invited_user_id
-                JOIN hoopstats.fantasy_league_statuses sl ON sl.id = i.status_id
+                FROM fantasy_league_invites i
+                JOIN users u ON u.id = i.invited_user_id
+                JOIN fantasy_league_statuses sl ON sl.id = i.status_id
                 WHERE i.league_id = $1
                   AND sl.code = 'pending'
                 `,
@@ -659,7 +659,7 @@ export const getLeagueDetails = async (req: any, res: any) => {
         // Datos básicos de la liga
         const leagueRes = await pool.query(`
             SELECT *
-            FROM hoopstats.fantasy_leagues
+            FROM fantasy_leagues
             WHERE id = $1
         `, [leagueId]);
 
@@ -676,9 +676,9 @@ export const getLeagueDetails = async (req: any, res: any) => {
                 ft.name AS team_name,
                 u.username AS owner,
                 COALESCE(flt.points, 0) AS points
-            FROM hoopstats.fantasy_league_teams flt
-            JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
-            JOIN hoopstats.users u ON u.id = ft.user_id
+            FROM fantasy_league_teams flt
+            JOIN fantasy_teams ft ON ft.id = flt.fantasy_team_id
+            JOIN users u ON u.id = ft.user_id
             WHERE flt.league_id = $1
             ORDER BY flt.points DESC
         `, [leagueId]);
@@ -706,8 +706,8 @@ export const getMyAdminStatus = async (req: any, res: any) => {
         const result = await pool.query(
             `
             SELECT 1
-            FROM hoopstats.fantasy_league_teams flt
-            JOIN hoopstats.fantasy_teams ft
+            FROM fantasy_league_teams flt
+            JOIN fantasy_teams ft
               ON ft.id = flt.fantasy_team_id
             WHERE ft.user_id = $1
               AND flt.is_admin = true
@@ -737,8 +737,8 @@ export const deleteMember = async (req: any, res: any) => {
         // Verificar admin
         const check = await pool.query(`
             SELECT 1
-            FROM hoopstats.fantasy_league_teams flt
-            JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
+            FROM fantasy_league_teams flt
+            JOIN fantasy_teams ft ON ft.id = flt.fantasy_team_id
             WHERE flt.league_id = $1
             AND flt.is_admin = true
             AND ft.user_id = $2
@@ -749,7 +749,7 @@ export const deleteMember = async (req: any, res: any) => {
         }
 
         // ❗ No podés borrar al creador
-        const league = await pool.query(`SELECT created_by, name FROM hoopstats.fantasy_leagues WHERE id = $1`, [leagueId]);
+        const league = await pool.query(`SELECT created_by, name FROM fantasy_leagues WHERE id = $1`, [leagueId]);
 
         if (league.rows[0].created_by === userId) {
             return res.status(403).json({ error: "No podés eliminar al creador de la liga" });
@@ -757,8 +757,8 @@ export const deleteMember = async (req: any, res: any) => {
 
         // Eliminar
         const deleteRes = await pool.query(`
-            DELETE FROM hoopstats.fantasy_league_teams flt
-            USING hoopstats.fantasy_teams ft
+            DELETE FROM fantasy_league_teams flt
+            USING fantasy_teams ft
             WHERE flt.fantasy_team_id = ft.id
             AND ft.user_id = $1
             AND flt.league_id = $2
@@ -794,8 +794,8 @@ export const isMemberOfLeague = async (req: any, res: any) => {
         const result = await pool.query(
             `
             SELECT flt.is_admin
-            FROM hoopstats.fantasy_league_teams flt
-            JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
+            FROM fantasy_league_teams flt
+            JOIN fantasy_teams ft ON ft.id = flt.fantasy_team_id
             WHERE flt.league_id = $1
             AND ft.user_id = $2
             LIMIT 1
@@ -830,7 +830,7 @@ export const leaveLeague = async (req: any, res: any) => {
         // Verificar liga y creador
         const leagueRes = await client.query(
             `SELECT created_by, name 
-             FROM hoopstats.fantasy_leagues 
+             FROM fantasy_leagues 
              WHERE id = $1`,
             [leagueId]
         );
@@ -853,8 +853,8 @@ export const leaveLeague = async (req: any, res: any) => {
         const teamRes = await client.query(
             `
             SELECT flt.fantasy_team_id
-            FROM hoopstats.fantasy_league_teams flt
-            JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
+            FROM fantasy_league_teams flt
+            JOIN fantasy_teams ft ON ft.id = flt.fantasy_team_id
             WHERE flt.league_id = $1 AND ft.user_id = $2
             `,
             [leagueId, userId]
@@ -868,7 +868,7 @@ export const leaveLeague = async (req: any, res: any) => {
         // Eliminar invitaciones pendientes del usuario en esa liga
         await client.query(
             `
-            DELETE FROM hoopstats.fantasy_league_invites
+            DELETE FROM fantasy_league_invites
             WHERE league_id = $1 AND invited_user_id = $2
             `,
             [leagueId, userId]
@@ -877,7 +877,7 @@ export const leaveLeague = async (req: any, res: any) => {
         //  Eliminar notificaciones relacionadas
         await client.query(
             `
-            DELETE FROM hoopstats.notifications
+            DELETE FROM notifications
             WHERE data->>'leagueId' = $1::text 
             AND user_id = $2
             `,
@@ -887,8 +887,8 @@ export const leaveLeague = async (req: any, res: any) => {
         // 6️Eliminar su participación en la liga
         const deleteRes = await client.query(
             `
-            DELETE FROM hoopstats.fantasy_league_teams flt
-            USING hoopstats.fantasy_teams ft
+            DELETE FROM fantasy_league_teams flt
+            USING fantasy_teams ft
             WHERE flt.fantasy_team_id = ft.id
             AND ft.user_id = $1
             AND flt.league_id = $2
@@ -904,7 +904,7 @@ export const leaveLeague = async (req: any, res: any) => {
 
         // Obtener username del usuario que abandona
         const userRes = await client.query(
-            `SELECT username FROM hoopstats.users WHERE id = $1`,
+            `SELECT username FROM users WHERE id = $1`,
             [userId]
         );
         const username = userRes.rows[0]?.username || "Un usuario";
@@ -913,8 +913,8 @@ export const leaveLeague = async (req: any, res: any) => {
         const adminsRes = await client.query(
             `
             SELECT ft.user_id
-            FROM hoopstats.fantasy_league_teams flt
-            JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
+            FROM fantasy_league_teams flt
+            JOIN fantasy_teams ft ON ft.id = flt.fantasy_team_id
             WHERE flt.league_id = $1 
             AND flt.is_admin = true
             AND ft.user_id != $2
@@ -960,7 +960,7 @@ export const deleteLeague = async (req: any, res: any) => {
         // Verificar liga y creador
         const leagueRes = await client.query(
             `SELECT created_by, name
-             FROM hoopstats.fantasy_leagues
+             FROM fantasy_leagues
              WHERE id = $1`,
             [leagueId]
         );
@@ -982,7 +982,7 @@ export const deleteLeague = async (req: any, res: any) => {
         // Eliminar invitaciones relacionadas
         await client.query(
             `
-            DELETE FROM hoopstats.fantasy_league_invites
+            DELETE FROM fantasy_league_invites
             WHERE league_id = $1
             `,
             [leagueId]
@@ -991,7 +991,7 @@ export const deleteLeague = async (req: any, res: any) => {
         // Eliminar notificaciones relacionadas a esta liga
         await client.query(
             `
-            DELETE FROM hoopstats.notifications
+            DELETE FROM notifications
             WHERE data->>'leagueId' = $1::text
             `,
             [leagueId.toString()]
@@ -1000,7 +1000,7 @@ export const deleteLeague = async (req: any, res: any) => {
         // Eliminar relaciones fantasy_team <-> liga
         await client.query(
             `
-            DELETE FROM hoopstats.fantasy_league_teams
+            DELETE FROM fantasy_league_teams
             WHERE league_id = $1
             `,
             [leagueId]
@@ -1009,7 +1009,7 @@ export const deleteLeague = async (req: any, res: any) => {
         // Eliminar liga finalmente
         await client.query(
             `
-            DELETE FROM hoopstats.fantasy_leagues
+            DELETE FROM fantasy_leagues
             WHERE id = $1
             `,
             [leagueId]
@@ -1018,9 +1018,9 @@ export const deleteLeague = async (req: any, res: any) => {
         // Obtener todos los usuarios de la liga
         const membersRes = await client.query(`
             SELECT u.id AS user_id
-            FROM hoopstats.fantasy_league_teams flt
-            JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
-            JOIN hoopstats.users u ON u.id = ft.user_id
+            FROM fantasy_league_teams flt
+            JOIN fantasy_teams ft ON ft.id = flt.fantasy_team_id
+            JOIN users u ON u.id = ft.user_id
             WHERE flt.league_id = $1
         `, [leagueId]);
 
@@ -1060,8 +1060,8 @@ export const activateMember = async (req: any, res: any) => {
         // Verificar que quien activa es admin
         const check = await pool.query(`
             SELECT 1
-            FROM hoopstats.fantasy_league_teams flt
-            JOIN hoopstats.fantasy_teams ft ON ft.id = flt.fantasy_team_id
+            FROM fantasy_league_teams flt
+            JOIN fantasy_teams ft ON ft.id = flt.fantasy_team_id
             WHERE flt.league_id = $1 
               AND flt.is_admin = true 
               AND ft.user_id = $2
@@ -1075,9 +1075,9 @@ export const activateMember = async (req: any, res: any) => {
 
         // Activar usuario
         const result = await pool.query(`
-            UPDATE hoopstats.fantasy_league_teams flt
+            UPDATE fantasy_league_teams flt
             SET status_id = $1
-            FROM hoopstats.fantasy_teams ft
+            FROM fantasy_teams ft
             WHERE flt.fantasy_team_id = ft.id
               AND ft.user_id = $2
               AND flt.league_id = $3
