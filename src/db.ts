@@ -41,35 +41,40 @@ const patchQueryText = (text: string | undefined): string | undefined => {
 ============================ */
 // Creamos un proxy para que no tengas que cambiar nada en el resto de tu app
 export const pool = {
-  ...originalPool,
-  query: async (text: string | QueryConfig, params?: any[]): Promise<QueryResult<any>> => {
+  query: async (text: string | QueryConfig, params?: any[]) => {
     if (typeof text === "string") {
       return originalPool.query(patchQueryText(text)!, params);
     } else {
-      text.text = patchQueryText(text.text)!;
-      return originalPool.query(text, params);
+      const patched = { ...text, text: patchQueryText(text.text)! };
+      return originalPool.query(patched, params);
     }
   },
-  // Mantenemos acceso al cliente para transacciones (BEGIN/COMMIT)
+
   connect: async () => {
     const client = await originalPool.connect();
     const originalQuery = client.query.bind(client);
 
-    // Patch al cliente individual para que las transacciones también se traduzcan
-    client.query = (text: any, params?: any): any => {
-      if (typeof text === "string") {
-        return originalQuery(patchQueryText(text)!, params);
-      } else if (text && typeof text === "object") {
-        text.text = patchQueryText(text.text)!;
-        return originalQuery(text, params);
+    client.query = (text: any, params?: any) => {
+      if (typeof text === "string") return originalQuery(patchQueryText(text)!, params);
+      if (text && typeof text === "object") {
+        const patched = { ...text, text: patchQueryText(text.text)! };
+        return originalQuery(patched, params);
       }
       return originalQuery(text, params);
     };
+
     return client;
   },
+
+  // exponer contadores reales
+  get totalCount() { return originalPool.totalCount; },
+  get idleCount() { return originalPool.idleCount; },
+  get waitingCount() { return originalPool.waitingCount; },
+
   on: originalPool.on.bind(originalPool),
   end: originalPool.end.bind(originalPool),
 };
+
 
 console.log(`🚀 Modo DB: ${TARGET_SCHEMA === "hoopstats" ? "PRODUCCIÓN" : "TEST (" + TARGET_SCHEMA + ")"}`);
 
@@ -81,7 +86,6 @@ originalPool.on("error", (err) => {
 });
 
 process.on("SIGTERM", async () => {
-  console.log("🔌 Cerrando conexiones DB...");
   await originalPool.end();
   process.exit(0);
 });

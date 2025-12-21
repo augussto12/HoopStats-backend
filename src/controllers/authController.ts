@@ -117,7 +117,7 @@ export const register = async (req: any, res: any) => {
         );
 
         const sessionToken = jwt.sign(
-            { userId: user.id },
+            { userId: user.id, email_verified: false },
             process.env.JWT_SECRET!,
             { expiresIn: "1d" }
         );
@@ -141,45 +141,72 @@ export const register = async (req: any, res: any) => {
 // VERIFY EMAIL
 export const verifyEmail = async (req: any, res: any) => {
     try {
-        const { token, email } = req.query;
+        const { token: rawToken, email } = req.query;
 
-        if (!token || !email)
+        if (!rawToken || !email) {
             return res.status(400).json({ error: "Faltan datos" });
+        }
+
+        const normalizedEmail = String(email).trim().toLowerCase();
 
         const result = await pool.query(
             `SELECT id, email_verification_token, email_verification_expires 
-             FROM hoopstats.users WHERE email = $1`,
-            [email]
+       FROM hoopstats.users 
+       WHERE email = $1`,
+            [normalizedEmail]
         );
 
-        if (result.rows.length === 0)
+        if (result.rows.length === 0) {
             return res.status(400).json({ error: "Token inválido" });
+        }
 
         const user = result.rows[0];
 
-        if (user.email_verification_expires < new Date())
-            return res.status(400).json({ error: "Token vencido" });
+        // si el token ya fue consumido (NULL), devolvé "ok" o error prolijo
+        if (!user.email_verification_token || !user.email_verification_expires) {
+            // ya estaba verificado o ya se usó el link
+            const sessionToken = jwt.sign(
+                { userId: user.id, email_verified: true },
+                process.env.JWT_SECRET!,
+                { expiresIn: "4h" }
+            );
 
-        const match = bcrypt.compareSync(token as string, user.email_verification_token);
-        if (!match)
+            return res.json({ ok: true, message: "Email ya verificado", token: sessionToken });
+        }
+
+        if (new Date(user.email_verification_expires) < new Date()) {
+            return res.status(400).json({ error: "Token vencido" });
+        }
+
+        const match = bcrypt.compareSync(String(rawToken), user.email_verification_token);
+        if (!match) {
             return res.status(400).json({ error: "Token inválido" });
+        }
 
         await pool.query(
             `UPDATE hoopstats.users
-             SET email_verified = true,
-                 email_verification_token = NULL,
-                 email_verification_expires = NULL
-             WHERE id = $1`,
+       SET email_verified = true,
+           email_verification_token = NULL,
+           email_verification_expires = NULL
+       WHERE id = $1`,
             [user.id]
         );
 
-        return res.json({ ok: true, message: "Email verificado correctamente" });
+        // token nuevo con claim email_verified
+        const sessionToken = jwt.sign(
+            { userId: user.id, email_verified: true },
+            process.env.JWT_SECRET!,
+            { expiresIn: "4h" }
+        );
+
+        return res.json({ ok: true, message: "Email verificado correctamente", token: sessionToken });
 
     } catch (err) {
         console.error("verifyEmail error:", err);
         return res.status(500).json({ error: "Error en el servidor" });
     }
 };
+
 
 // RESEND VERIFICATION EMAIL
 export const resendVerification = async (req: any, res: any) => {
@@ -275,7 +302,7 @@ export const login = async (req: any, res: any) => {
             return res.status(400).json({ error: "Credenciales inválidas" });
 
         const token = jwt.sign(
-            { userId: user.id },
+            { userId: user.id, email_verified: !!user.email_verified },
             process.env.JWT_SECRET!,
             { expiresIn: "4h" }
         );
@@ -312,12 +339,19 @@ export const refresh = async (req: any, res: any) => {
             return res.status(401).json({ error: "Token inválido" });
         }
 
-        // Generamos un nuevo token válido por 4 horas
+        const u = await pool.query(
+            `SELECT email_verified FROM hoopstats.users WHERE id = $1`,
+            [userId]
+        );
+
+        const emailVerified = !!u.rows[0]?.email_verified;
+
         const newToken = jwt.sign(
-            { userId },
+            { userId, email_verified: emailVerified },
             process.env.JWT_SECRET!,
             { expiresIn: "4h" }
         );
+
 
         return res.json({ token: newToken });
 

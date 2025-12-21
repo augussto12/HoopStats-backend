@@ -1,30 +1,34 @@
+import type { PoolClient } from "pg";
 import { pool } from "../db";
 
-export const isMarketLocked = async (): Promise<boolean> => {
+const ARG_TZ = "America/Argentina/Buenos_Aires";
+
+// YYYY-MM-DD en Argentina sin corrimiento por UTC
+const todayInArgentina = () =>
+    new Intl.DateTimeFormat("en-CA", { timeZone: ARG_TZ }).format(new Date());
+
+export const isMarketLocked = async (client?: PoolClient): Promise<boolean> => {
+    const db = client ?? pool;
+
+    // "ahora" en Argentina (como Date)
     const nowARG = new Date(
-        new Date().toLocaleString("en-US", {
-            timeZone: "America/Argentina/Buenos_Aires",
-        })
+        new Date().toLocaleString("en-US", { timeZone: ARG_TZ })
     );
 
-    const today = nowARG.toISOString().slice(0, 10); // YYYY-MM-DD
+    const today = todayInArgentina();
 
-    // Buscar SOLO el lock del día actual
-    const res = await pool.query(
+    const res = await db.query(
         `SELECT lock_start, lock_end
-         FROM hoopstats.market_lock
-         WHERE lock_start::date = $1
-         LIMIT 1`,
+     FROM hoopstats.market_lock
+     WHERE lock_start::date = $1
+     LIMIT 1`,
         [today]
     );
 
-    // ❗ No hay lock hoy → día libre
-    if (res.rows.length === 0) {
-        return false;
-    }
+    if (res.rowCount === 0) return false;
 
-    const { lock_start, lock_end } = res.rows[0];
+    const lockStart = new Date(res.rows[0].lock_start);
+    const lockEnd = new Date(res.rows[0].lock_end);
 
-    // Chequear si AHORA está dentro del período bloqueado
-    return nowARG >= lock_start && nowARG <= lock_end;
+    return nowARG >= lockStart && nowARG <= lockEnd;
 };

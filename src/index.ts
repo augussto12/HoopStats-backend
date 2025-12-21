@@ -4,6 +4,11 @@ import dotenv from "dotenv";
 import cron from "node-cron";
 import { pool } from "./db";
 
+import { configureSecurity } from "./config/security";
+import { auth } from "./middlewares/auth";
+import { requireEmailVerified } from "./middlewares/requireEmailVerified";
+import { requireCronKey } from "./middlewares/requireCronKey";
+
 import { runDailyGamesCron } from "./cron/dailyGamesCronController";
 import { runFantasyCron } from "./cron/fantasyCronController";
 import { runPredictionCron } from "./cron/predictionCronController";
@@ -11,11 +16,8 @@ import { runBestPlayersCron } from "./cron/bestPlayersCronController";
 import { runMarketLockCron } from "./cron/marketLockCronController";
 import { runWeeklyDreamTeamCron } from "./cron/dreamTeamCronController";
 
-import { auth } from "./middlewares/auth";
-import { configureSecurity } from "./config/security";
-
+import nbaRoutes from "./routes/nbaRoutes";
 import authRoutes from "./routes/authRoutes";
-
 import fantasyRoutes from "./routes/fantasyRoutes";
 import fantasyCronRoutes from "./routes/fantasyCronRoutes";
 import fantasyLeaguesRoutes from "./routes/fantasyLeaguesRoutes";
@@ -34,48 +36,47 @@ import bestPlayersCronRoutes from "./routes/bestPlayersCronRoutes";
 import marketLockRoutes from "./routes/marketLockRoutes";
 import marketLockCronRoutes from "./routes/marketLockCronRoutes";
 import dailyGamesCronRoutes from "./routes/dailyGamesCronRoutes";
-import gameRoutes from "./routes/gamesRoutes"
-import nbaRoutes from "./routes/nbaRoutes"
 import dreamTeamCronRoutes from "./routes/dreamTeamCronRoutes";
-import { requireEmailVerified } from "./middlewares/requireEmailVerified";
-import { requireCronKey } from "./middlewares/requireCronKey";
+import gameRoutes from "./routes/gamesRoutes";
 
 dotenv.config();
 
+const app = express();
+const PORT = process.env.PORT || 3000;
 
-// ──────────────────────────────────────────
-//                CRON LOCAL (07:00 AR)
-// ──────────────────────────────────────────
+app.set("trust proxy", 1);
+app.use(express.json());
+
+
+app.use(
+    cors({
+        origin: [
+            "http://localhost:4200",
+            "https://hoopstats.com.ar",
+            "https://www.hoopstats.com.ar",
+            "https://hoopstats.netlify.app",
+        ],
+        credentials: false,
+        allowedHeaders: ["Content-Type", "Authorization", "x-cron-key"],
+        methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    })
+);
+
+configureSecurity(app);
+
+// CRON LOCAL (07:00 AR)
 cron.schedule(
     "0 7 * * *",
     async () => {
         const client = await pool.connect();
-
         try {
-            const lock = await client.query(
-                "SELECT pg_try_advisory_lock(900001) AS ok"
+            const lock = await client.query("SELECT pg_try_advisory_lock(900001) AS ok");
+            if (!lock.rows[0]?.ok) return;
+
+            const nowARG = new Date(
+                new Date().toLocaleString("en-US", { timeZone: "America/Argentina/Buenos_Aires" })
             );
-
-            if (!lock.rows[0].ok) {
-                console.log("[CRON] Otra instancia ya ejecutó el cron. Skip.");
-                return;
-            }
-
-            const now = new Date();
-
-            // Obtenemos un string con la fecha/hora actual en ARG
-            const argentinaTime = now.toLocaleString("en-US", {
-                timeZone: "America/Argentina/Buenos_Aires"
-            });
-
-            // Creamos un objeto de fecha basado en ese string para sacar el día real allá
-            const dayOfWeek = new Date(argentinaTime).getDay();
-
-
-            console.log(
-                "⏱ [CRON] Ejecutando crons (07:00 AR)...",
-                now.toISOString()
-            );
+            const dow = nowARG.getDay();
 
             await runDailyGamesCron();
             await runFantasyCron();
@@ -83,85 +84,46 @@ cron.schedule(
             await runBestPlayersCron();
             await runMarketLockCron();
 
-            // 3. EJECUTAR DREAM TEAM SOLO LOS LUNES (Day 1)
-            if (dayOfWeek === 1) {
-                console.log("[CRON] Confirmado Lunes en Argentina: Ejecutando Dream Team...");
+            if (dow === 1) {
                 await runWeeklyDreamTeamCron();
             }
-
-            console.log("[CRON] Todos los crons terminaron OK.");
         } catch (err) {
-            console.error("[CRON] Error ejecutando crons:", err);
+            console.error("[CRON] Error crítico:", err);
         } finally {
-            await client.query("SELECT pg_advisory_unlock(900001)");
+            try { await client.query("SELECT pg_advisory_unlock(900001)"); } catch { }
             client.release();
-            console.log("[CRON] Lock liberado.");
         }
     },
     { timezone: "America/Argentina/Buenos_Aires" }
 );
 
-
-
-const app = express();
-
-// Railway usa proxy
-app.set("trust proxy", 1);
-
-// CORS
-app.use(cors({
-    origin: [
-        "http://localhost:4200",
-        "https://hoopstats.com.ar",
-        "https://www.hoopstats.com.ar",
-        "https://hoopstats.netlify.app",
-        "https://localhost",
-    ],
-    credentials: false,
-    allowedHeaders: ["Content-Type", "Authorization", "x-cron-key"],
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-}));
-
-
-
-// Seguridad
-configureSecurity(app);
-
-const PORT = process.env.PORT || 3000;
-
-// ──────────────────────────────────────────
-//                 RUTAS
-// ──────────────────────────────────────────
+// RUTAS
 app.use("/api/nba", nbaRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/fantasy", auth, requireEmailVerified, fantasyRoutes);
-app.use("/api/fantasy-cron", requireCronKey, fantasyCronRoutes);
 app.use("/api/notifications", auth, notificationRoutes);
-
 app.use("/api/fantasy-leagues", auth, requireEmailVerified, fantasyLeaguesRoutes);
 app.use("/api/fantasy-trades", auth, requireEmailVerified, fantasyTradesRoutes);
 app.use("/api/fantasy-league-membership", auth, requireEmailVerified, leaguesMembershipRoutes);
-
 app.use("/api/players", playerRoutes);
 app.use("/api/teams", teamRoutes);
 app.use("/api/predictions", auth, requireEmailVerified, predictionRoutes);
-app.use("/api/prediction-cron", requireCronKey, predictionCronRoutes);
-
 app.use("/api/users", userRoutes);
-app.use("/api/cron", requireCronKey, cronRoutes);
 app.use("/api/favorites", auth, requireEmailVerified, favoritesRoutes);
 app.use("/api/best-players", bestPlayersRoutes);
-app.use("/api/best-players-cron", requireCronKey, bestPlayersCronRoutes);
-app.use("/api/dream-team-cron", requireCronKey, dreamTeamCronRoutes);
 app.use("/api/market-lock", marketLockRoutes);
+app.use("/games", gameRoutes);
+
+// Rutas protegidas por cron-key
+app.use("/api/cron", requireCronKey, cronRoutes);
+app.use("/api/fantasy-cron", requireCronKey, fantasyCronRoutes);
+app.use("/api/prediction-cron", requireCronKey, predictionCronRoutes);
+app.use("/api/best-players-cron", requireCronKey, bestPlayersCronRoutes);
 app.use("/api/market-lock-cron", requireCronKey, marketLockCronRoutes);
 app.use("/api/daily-games-cron", requireCronKey, dailyGamesCronRoutes);
-app.use("/games", gameRoutes);
-app.get("/api/test", (req, res) => res.json({ ok: true }));
+app.use("/api/dream-team-cron", requireCronKey, dreamTeamCronRoutes);
 
-app.get("/api/protected", auth, (req, res) => {
-    res.json({ ok: true, user: req.user });
-});
+app.get("/api/test", (_req, res) => res.json({ ok: true }));
 
 app.listen(PORT, () => {
     console.log(`🚀 Backend escuchando en puerto ${PORT}`);

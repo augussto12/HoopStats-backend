@@ -4,10 +4,10 @@ import { isMarketLocked } from "../services/market-lock";
 
 // Obtener mi equipo de fantasy
 export const getMyTeam = async (req: any, res: any) => {
+
     try {
         const userId = req.user.userId;
 
-        // 1. Buscamos el equipo
         const teamRes = await pool.query(
             "SELECT * FROM hoopstats.fantasy_teams WHERE user_id = $1",
             [userId]
@@ -19,18 +19,16 @@ export const getMyTeam = async (req: any, res: any) => {
 
         const team = teamRes.rows[0];
 
-        // 2. Buscamos los jugadores (AQUÍ ESTÁ EL TRUCO)
         const playersRes = await pool.query(
             `SELECT 
                 p.id AS player_id, 
                 p.full_name, 
                 fp.price, 
                 fp.total_pts, 
-                fp.is_captain  -- <--- ESTA LÍNEA ES OBLIGATORIA
+                fp.is_captain 
              FROM hoopstats.fantasy_players fp
              JOIN hoopstats.players p ON fp.player_id = p.id
-             WHERE fp.fantasy_team_id = $1
-             ORDER BY fp.id ASC`,
+             WHERE fp.fantasy_team_id = $1`,
             [team.id]
         );
 
@@ -38,10 +36,13 @@ export const getMyTeam = async (req: any, res: any) => {
             team,
             players: playersRes.rows
         });
+
     } catch (err) {
-        res.status(500).json({ error: "Error al obtener equipo" });
+        console.error("💥 [BE] /fantasy/my-team ERROR", err);
+        return res.status(500).json({ error: "Error al obtener equipo" });
     }
 };
+
 
 // Crear equipo
 export const createTeam = async (req: any, res: any) => {
@@ -355,8 +356,12 @@ export const getMyTransactions = async (req: any, res: any) => {
 };
 
 
-
 export const applyTrades = async (req: any, res: any) => {
+    const reqId = Math.random().toString(36).slice(2, 8);
+    const t0 = Date.now();
+    const log = (...a: any[]) => console.log(`🔁 [applyTrades ${reqId}]`, ...a);
+    const logErr = (...a: any[]) => console.error(`💥 [applyTrades ${reqId}]`, ...a);
+
     const normalizeIds = (x: any) =>
         Array.isArray(x)
             ? [...new Set(x.map((v) => Number(v)).filter((n) => Number.isInteger(n) && n > 0))]
@@ -365,233 +370,260 @@ export const applyTrades = async (req: any, res: any) => {
     const addIds = normalizeIds(req.body?.add);
     const dropIds = normalizeIds(req.body?.drop);
 
-    // máximo 10 movimientos (ajustalo si querés)
+    log("START", "user:", req.user?.userId, "add:", addIds, "drop:", dropIds);
+
     if (addIds.length > 10 || dropIds.length > 10) {
         return res.status(400).json({ error: "Demasiados cambios en una sola operación." });
     }
 
-    // no permitir el mismo id en add y drop
     const overlap = addIds.filter((id) => dropIds.includes(id));
     if (overlap.length) {
         return res.status(400).json({ error: "No podés agregar y quitar el mismo jugador." });
     }
 
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: "No autenticado" });
+
+    const client = await pool.connect();
+    let inTx = false;
+
     try {
-        const locked = await isMarketLocked();
+        // ✅ Arrancá transacción primero (para que TODO use el mismo client)
+        log("BEGIN...");
+        await client.query("BEGIN");
+        inTx = true;
+
+        // 🔥 Evita cuelgues infinitos
+        await client.query(`SET LOCAL lock_timeout = '1500ms'`);
+        await client.query(`SET LOCAL statement_timeout = '8000ms'`);
+
+        // ✅ Market lock usando el MISMO CLIENT (clave para que no se cuelgue)
+        log("Check market lock (same tx/client)...");
+        const locked = await isMarketLocked(client);
+        log("Market lock =", locked);
+
         if (locked) {
+            await client.query("ROLLBACK");
+            inTx = false;
             return res.status(403).json({
                 error: "El mercado está bloqueado. Intentá mañana a las 07:00 AM."
             });
         }
 
-        const userId = req.user.userId;
+        // ✅ Lock del equipo: FOR UPDATE NOWAIT (si hay otra request, responde 409, no cuelga)
+        log("Lock team row (FOR UPDATE NOWAIT)...");
+        const teamRes = await client.query(
+            `SELECT id, budget, trades_remaining
+       FROM hoopstats.fantasy_teams
+       WHERE user_id = $1
+       FOR UPDATE NOWAIT`,
+            [userId]
+        );
 
-        const client = await pool.connect();
-        try {
-            const teamRes = await client.query(
-                `SELECT id, budget, trades_remaining
-         FROM hoopstats.fantasy_teams
-         WHERE user_id = $1`,
-                [userId]
+        if ((teamRes.rowCount ?? 0) === 0) {
+            await client.query("ROLLBACK");
+            inTx = false;
+            return res.status(400).json({ error: "No tenés equipo creado" });
+        }
+
+        const teamId = Number(teamRes.rows[0].id);
+        let budget = Number(teamRes.rows[0].budget);
+        const tradesRemaining = Number(teamRes.rows[0].trades_remaining);
+
+        const nuevosTrades = Math.max(addIds.length, dropIds.length);
+        if (nuevosTrades === 0) {
+            await client.query("ROLLBACK");
+            inTx = false;
+            return res.status(400).json({ error: "No hay cambios para aplicar." });
+        }
+
+        if (tradesRemaining < nuevosTrades) {
+            await client.query("ROLLBACK");
+            inTx = false;
+            return res.status(400).json({ error: "No te quedan trades disponibles hoy." });
+        }
+
+        const movementTime = new Date();
+
+        // ============================
+        //           DROPS
+        // ============================
+        for (const playerId of dropIds) {
+            log("DROP", playerId);
+
+            const delRes = await client.query(
+                `DELETE FROM hoopstats.fantasy_players
+         WHERE fantasy_team_id = $1 AND player_id = $2
+         RETURNING price`,
+                [teamId, playerId]
             );
 
-            if (teamRes.rows.length === 0) {
-                return res.status(400).json({ error: "No tenés equipo creado" });
-            }
-
-            const team = {
-                ...teamRes.rows[0],
-                budget: Number(teamRes.rows[0].budget),
-                trades_remaining: Number(teamRes.rows[0].trades_remaining),
-            };
-
-            const nuevosTrades = Math.max(addIds.length, dropIds.length);
-
-            if (nuevosTrades === 0) {
-                return res.status(400).json({ error: "No hay cambios para aplicar." });
-            }
-
-            if (team.trades_remaining < nuevosTrades) {
-                return res.status(400).json({ error: "No te quedan trades disponibles hoy." });
-            }
-
-            await client.query("BEGIN");
-
-            const movementTime = new Date();
-
-            // ============================
-            //           DROPS
-            // ============================
-            for (const playerId of dropIds) {
-                const delRes = await client.query(
-                    `DELETE FROM hoopstats.fantasy_players
-           WHERE fantasy_team_id = $1 AND player_id = $2
-           RETURNING price`,
-                    [team.id, playerId]
-                );
-
-                if (delRes.rows.length > 0) {
-                    const price = Number(delRes.rows[0].price);
-
-                    await client.query(
-                        `UPDATE hoopstats.fantasy_teams
-             SET budget = budget + $1
-             WHERE id = $2`,
-                        [price, team.id]
-                    );
-
-                    team.budget += price;
-
-                    await client.query(
-                        `INSERT INTO hoopstats.fantasy_trades
-             (fantasy_team_id, player_id, action, created_at)
-             VALUES ($1, $2, 'drop', $3)`,
-                        [team.id, playerId, movementTime]
-                    );
-                }
-            }
-
-            // ============================
-            //            ADDS
-            // ============================
-            for (const playerId of addIds) {
-                // (Opcional pero recomendado) evitar duplicados antes de insertar
-                const dup = await client.query(
-                    `SELECT 1 FROM hoopstats.fantasy_players
-           WHERE fantasy_team_id = $1 AND player_id = $2`,
-                    [team.id, playerId]
-                );
-                if (dup.rows.length) continue;
-
-                const pRes = await client.query(
-                    `SELECT price FROM hoopstats.players WHERE id = $1`,
-                    [playerId]
-                );
-                if (pRes.rows.length === 0) continue;
-
-                const price = Number(pRes.rows[0].price);
-
-                if (team.budget < price) {
-                    throw new Error("No tenés presupuesto suficiente");
-                }
-
-                await client.query(
-                    `INSERT INTO hoopstats.fantasy_players
-           (fantasy_team_id, player_id, price)
-           VALUES ($1, $2, $3)`,
-                    [team.id, playerId, price]
-                );
-
-                team.budget -= price;
+            if ((delRes.rowCount ?? 0) > 0) {
+                const price = Number(delRes.rows[0].price);
 
                 await client.query(
                     `UPDATE hoopstats.fantasy_teams
-           SET budget = $1
+           SET budget = budget + $1
            WHERE id = $2`,
-                    [team.budget, team.id]
+                    [price, teamId]
                 );
+
+                budget += price;
 
                 await client.query(
                     `INSERT INTO hoopstats.fantasy_trades
            (fantasy_team_id, player_id, action, created_at)
-           VALUES ($1, $2, 'add', $3)`,
-                    [team.id, playerId, movementTime]
+           VALUES ($1, $2, 'drop', $3)`,
+                    [teamId, playerId, movementTime]
                 );
+            }
+        }
+
+        // ============================
+        //            ADDS
+        // ============================
+        for (const playerId of addIds) {
+            log("ADD", playerId);
+
+            const dup = await client.query(
+                `SELECT 1 FROM hoopstats.fantasy_players
+         WHERE fantasy_team_id = $1 AND player_id = $2`,
+                [teamId, playerId]
+            );
+            if ((dup.rowCount ?? 0) > 0) continue;
+
+            const pRes = await client.query(
+                `SELECT price FROM hoopstats.players WHERE id = $1`,
+                [playerId]
+            );
+            if ((pRes.rowCount ?? 0) === 0) continue;
+
+            const price = Number(pRes.rows[0].price);
+
+            if (budget < price) {
+                throw new Error("No tenés presupuesto suficiente");
             }
 
             await client.query(
-                `UPDATE hoopstats.fantasy_teams
-         SET trades_remaining = trades_remaining - $1
-         WHERE id = $2`,
-                [nuevosTrades, team.id]
+                `INSERT INTO hoopstats.fantasy_players (fantasy_team_id, player_id, price)
+         VALUES ($1, $2, $3)`,
+                [teamId, playerId, price]
             );
 
-            await client.query("COMMIT");
+            await client.query(
+                `UPDATE hoopstats.fantasy_teams
+         SET budget = budget - $1
+         WHERE id = $2`,
+                [price, teamId]
+            );
 
-            return res.json({
-                message: "Cambios aplicados correctamente",
-                movementTime,
-            });
+            budget -= price;
 
-        } catch (error) {
-            await client.query("ROLLBACK");
-            return res.status(400).json({ error: "Error al hacer la transacción." });
-        } finally {
-            client.release();
+            await client.query(
+                `INSERT INTO hoopstats.fantasy_trades
+         (fantasy_team_id, player_id, action, created_at)
+         VALUES ($1, $2, 'add', $3)`,
+                [teamId, playerId, movementTime]
+            );
         }
 
-    } catch (err) {
-        return res.status(500).json({ error: "Error inesperado" });
+        await client.query(
+            `UPDATE hoopstats.fantasy_teams
+       SET trades_remaining = trades_remaining - $1
+       WHERE id = $2`,
+            [nuevosTrades, teamId]
+        );
+
+        await client.query("COMMIT");
+        inTx = false;
+
+        log(`END OK total=${Date.now() - t0} ms`);
+        return res.json({ message: "Cambios aplicados correctamente", movementTime });
+
+    } catch (e: any) {
+        // Si otra request ya lockeó el team -> NOWAIT da 55P03
+        if (e?.code === "55P03") {
+            if (inTx) {
+                try { await client.query("ROLLBACK"); } catch { }
+            }
+            return res.status(409).json({ error: "Ya hay un trade en curso. Esperá un segundo y reintentá." });
+        }
+
+        logErr("ERROR:", e);
+
+        if (inTx) {
+            try { await client.query("ROLLBACK"); } catch { }
+        }
+
+        return res.status(400).json({ error: e?.message || "Error al hacer la transacción." });
+
+    } finally {
+        client.release();
     }
 };
+
 
 export const setCaptain = async (req: any, res: any) => {
     try {
         const userId = req.user.userId;
-        const { teamId, playerId } = req.body; // <--- Recibimos ambos del body
+        const { teamId, playerId } = req.body;
 
         if (!teamId || !playerId) {
             return res.status(400).json({ error: "Faltan datos requeridos" });
         }
 
-        // 1. Verificar mercado bloqueado
         const locked = await isMarketLocked();
         if (locked) {
-            return res.status(403).json({
-                error: "Mercado cerrado. No puedes cambiar el capitán mientras hay partidos."
-            });
+            return res.status(403).json({ error: "Mercado cerrado. No puedes cambiar el capitán mientras hay partidos." });
         }
 
-        const client = await pool.connect();
-        try {
-            await client.query("BEGIN");
+        // ✅ 1 sola query: verifica equipo del usuario + que el jugador esté en el equipo
+        const q = `
+      WITH team_ok AS (
+        SELECT 1
+        FROM hoopstats.fantasy_teams
+        WHERE id = $1 AND user_id = $2
+      ),
+      player_ok AS (
+        SELECT 1
+        FROM hoopstats.fantasy_players
+        WHERE fantasy_team_id = $1 AND player_id = $3
+          AND EXISTS (SELECT 1 FROM team_ok)
+      ),
+      clear AS (
+        UPDATE hoopstats.fantasy_players
+        SET is_captain = false
+        WHERE fantasy_team_id = $1
+          AND EXISTS (SELECT 1 FROM player_ok)
+        RETURNING 1
+      ),
+      setcap AS (
+        UPDATE hoopstats.fantasy_players
+        SET is_captain = true
+        WHERE fantasy_team_id = $1 AND player_id = $3
+          AND EXISTS (SELECT 1 FROM player_ok)
+        RETURNING 1
+      )
+      SELECT
+        EXISTS (SELECT 1 FROM team_ok) AS team_ok,
+        EXISTS (SELECT 1 FROM player_ok) AS player_ok,
+        (SELECT count(*) FROM setcap) AS updated;
+    `;
 
-            // 2. Seguridad: Verificar que el equipo pertenezca al usuario
-            const teamCheck = await client.query(
-                `SELECT id FROM hoopstats.fantasy_teams WHERE id = $1 AND user_id = $2`,
-                [teamId, userId]
-            );
+        const r = await pool.query(q, [teamId, userId, playerId]);
 
-            if (teamCheck.rows.length === 0) {
-                return res.status(403).json({ error: "No tienes permiso sobre este equipo" });
-            }
+        const teamOk = r.rows[0]?.team_ok;
+        const playerOk = r.rows[0]?.player_ok;
+        const updated = Number(r.rows[0]?.updated || 0);
 
-            // 3. Verificar que el jugador pertenezca a ese equipo
-            const playerCheck = await client.query(
-                `SELECT 1 FROM hoopstats.fantasy_players WHERE fantasy_team_id = $1 AND player_id = $2`,
-                [teamId, playerId]
-            );
+        if (!teamOk) return res.status(403).json({ error: "No tienes permiso sobre este equipo" });
+        if (!playerOk) return res.status(400).json({ error: "El jugador no integra este equipo" });
+        if (updated === 0) return res.status(400).json({ error: "No se pudo actualizar capitán" });
 
-            if (playerCheck.rows.length === 0) {
-                return res.status(400).json({ error: "El jugador no integra este equipo" });
-            }
-
-            // 4. Operación Atómica: Quitar capitán actual y poner el nuevo
-            await client.query(
-                `UPDATE hoopstats.fantasy_players 
-                 SET is_captain = false 
-                 WHERE fantasy_team_id = $1`,
-                [teamId]
-            );
-
-            await client.query(
-                `UPDATE hoopstats.fantasy_players 
-                 SET is_captain = true 
-                 WHERE fantasy_team_id = $1 AND player_id = $2`,
-                [teamId, playerId]
-            );
-
-            await client.query("COMMIT");
-            return res.json({ message: "Capitán actualizado correctamente" });
-
-        } catch (error) {
-            await client.query("ROLLBACK");
-            throw error;
-        } finally {
-            client.release();
-        }
+        return res.json({ message: "Capitán actualizado correctamente" });
     } catch (err) {
         console.error("Error al asignar capitán:", err);
         return res.status(500).json({ error: "Error interno del servidor" });
     }
 };
+
