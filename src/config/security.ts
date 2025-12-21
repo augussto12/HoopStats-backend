@@ -99,7 +99,6 @@ export const configureSecurity = (app: any) => {
         5) SANITIZACIÓN XSS COMPLETA (Recursiva)
     ============================== */
     const sanitizeValue = (value: any): any => {
-        // 1. Si es un string, lo limpiamos con la librería
         if (typeof value === "string") {
             return sanitizeHtml(value, {
                 allowedTags: [],
@@ -107,12 +106,10 @@ export const configureSecurity = (app: any) => {
             });
         }
 
-        // 2. Si es un array, limpiamos cada elemento uno por uno
         if (Array.isArray(value)) {
             return value.map(item => sanitizeValue(item));
         }
 
-        // 3. Si es un objeto, limpiamos todas sus propiedades por dentro
         if (typeof value === "object" && value !== null) {
             const cleanObj: any = {};
             for (const key in value) {
@@ -120,16 +117,29 @@ export const configureSecurity = (app: any) => {
             }
             return cleanObj;
         }
-
-        // 4. Si es número, boolean o null, lo dejamos igual
         return value;
     };
 
     app.use((req: Request, _res: Response, next: NextFunction) => {
-        // Ahora aplicamos la función a todo el objeto, no solo al primer nivel
-        if (req.body) req.body = sanitizeValue(req.body);
-        if (req.query) req.query = sanitizeValue(req.query);
-        if (req.params) req.params = sanitizeValue(req.params);
+        // En lugar de req.body = sanitizeValue(req.body),
+        // limpiamos las propiedades una por una para no romper el objeto raíz de Express
+        if (req.body && typeof req.body === 'object') {
+            for (const key in req.body) {
+                req.body[key] = sanitizeValue(req.body[key]);
+            }
+        }
+
+        if (req.query && typeof req.query === 'object') {
+            for (const key in req.query) {
+                req.query[key] = sanitizeValue(req.query[key]);
+            }
+        }
+
+        if (req.params && typeof req.params === 'object') {
+            for (const key in req.params) {
+                req.params[key] = sanitizeValue(req.params[key]);
+            }
+        }
 
         next();
     });
