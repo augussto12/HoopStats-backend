@@ -15,6 +15,7 @@ import { runPredictionCron } from "./cron/predictionCronController";
 import { runBestPlayersCron } from "./cron/bestPlayersCronController";
 import { runMarketLockCron } from "./cron/marketLockCronController";
 import { runWeeklyDreamTeamCron } from "./cron/dreamTeamCronController";
+import { runInjuryScrapingCron } from "./cron/injuryReportCronController";
 
 import nbaRoutes from "./routes/nbaRoutes";
 import authRoutes from "./routes/authRoutes";
@@ -38,6 +39,7 @@ import marketLockCronRoutes from "./routes/marketLockCronRoutes";
 import dailyGamesCronRoutes from "./routes/dailyGamesCronRoutes";
 import dreamTeamCronRoutes from "./routes/dreamTeamCronRoutes";
 import gameRoutes from "./routes/gamesRoutes";
+import { getInjuryReport } from "./controllers/nbaInjuriesController";
 
 dotenv.config();
 
@@ -46,7 +48,6 @@ const PORT = process.env.PORT || 3000;
 
 app.set("trust proxy", 1);
 app.use(express.json());
-
 
 app.use(cors({
     origin: [
@@ -63,7 +64,30 @@ app.use(cors({
 
 configureSecurity(app);
 
-// CRON LOCAL (07:00 AR)
+// --- SECCIÓN DE CRONS ---
+
+// 1. CRON DE LESIONES (Triple ejecución: 07, 13 y 17 hs AR)
+cron.schedule(
+    "0 7,13,17 * * *",
+    async () => {
+        const client = await pool.connect();
+        try {
+            // Usamos un lock ID diferente (900002) para no interferir con el cron general
+            const lock = await client.query("SELECT pg_try_advisory_lock(900002) AS ok");
+            if (!lock.rows[0]?.ok) return;
+
+            await runInjuryScrapingCron();
+        } catch (err) {
+            console.error("[CRON-INJURIES] Error:", err);
+        } finally {
+            try { await client.query("SELECT pg_advisory_unlock(900002)"); } catch { }
+            client.release();
+        }
+    },
+    { timezone: "America/Argentina/Buenos_Aires" }
+);
+
+// 2. CRON GENERAL (07:00 AR)
 cron.schedule(
     "0 7 * * *",
     async () => {
@@ -96,7 +120,7 @@ cron.schedule(
     { timezone: "America/Argentina/Buenos_Aires" }
 );
 
-// RUTAS
+// --- RUTAS ---
 app.use("/api/nba", nbaRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/fantasy", auth, requireEmailVerified, fantasyRoutes);
@@ -113,7 +137,9 @@ app.use("/api/best-players", bestPlayersRoutes);
 app.use("/api/market-lock", marketLockRoutes);
 app.use("/games", gameRoutes);
 
-// Rutas protegidas por cron-key
+// Ruta de Lesiones (Lee de la base de datos local)
+app.get("/api/injuries", getInjuryReport);
+
 app.use("/api/cron", requireCronKey, cronRoutes);
 app.use("/api/fantasy-cron", requireCronKey, fantasyCronRoutes);
 app.use("/api/prediction-cron", requireCronKey, predictionCronRoutes);
@@ -126,4 +152,9 @@ app.get("/api/test", (_req, res) => res.json({ ok: true }));
 
 app.listen(PORT, () => {
     console.log(`🚀 Backend escuchando en puerto ${PORT}`);
+
+    // --- EJECUCIÓN MANUAL ÚNICA ---
+    // Esta línea se ejecuta al arrancar el servidor para llenar la tabla por primera vez.
+    // Una vez que veas en la consola "✅ DB: Reporte de lesiones actualizado", puedes borrarla o comentarla.
+    //runInjuryScrapingCron();
 });
