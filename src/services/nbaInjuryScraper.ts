@@ -91,29 +91,29 @@ export const fetchInjuryReport = async (): Promise<ScrapedTeamGroup[]> => {
         let htmlContent: string;
 
         // --- OPCIÓN A: ZENROWS (ACTUAL) ---
-        console.log("1. Conectando a ZenRows (CBS Sports)...");
-        const response = await axios({
-            url: 'https://api.zenrows.com/v1/',
-            method: 'GET',
-            timeout: 30000,
-            params: {
-                'url': NBA_URL,
-                'apikey': ZENROWS_API_KEY,
-                'js_render': 'true',
-                'json_response': 'true',
-                'premium_proxy': 'true'
-            },
-        });
-        htmlContent = response.data.html || response.data.content || (typeof response.data === 'string' ? response.data : null);
+        // console.log("1. Conectando a ZenRows (CBS Sports)...");
+        // const response = await axios({
+        //     url: 'https://api.zenrows.com/v1/',
+        //     method: 'GET',
+        //     timeout: 30000,
+        //     params: {
+        //         'url': NBA_URL,
+        //         'apikey': ZENROWS_API_KEY,
+        //         'js_render': 'true',
+        //         'json_response': 'true',
+        //         'premium_proxy': 'true'
+        //     },
+        // });
+        // htmlContent = response.data.html || response.data.content || (typeof response.data === 'string' ? response.data : null);
 
-        /* // --- OPCIÓN B: SCRAPE.DO (ALTERNATIVA POR SI SE ACABAN LOS CRÉDITOS) ---
+        // --- OPCIÓN B: SCRAPE.DO (ALTERNATIVA POR SI SE ACABAN LOS CRÉDITOS) ---
         // Para usar esta, comenta el bloque de ZenRows arriba y descomenta este:
-        
+
         console.log("1. Conectando a Scrape.do (Alternativa)...");
         const targetUrl = encodeURIComponent(NBA_URL);
         const response = await axios.get(`http://api.scrape.do/?url=${targetUrl}&token=${SCRAPEDO_TOKEN}`);
         htmlContent = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
-        */
+
 
         if (!htmlContent) {
             throw new Error("No se recibió contenido HTML del proveedor de scraping");
