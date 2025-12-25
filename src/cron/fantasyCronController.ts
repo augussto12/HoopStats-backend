@@ -73,7 +73,7 @@ export const runFantasyCron = async () => {
 
         if (finishedGames.length === 0) {
             console.log("FantasyCron END (no finished games)");
-            client.release(); // Importante liberar aquí
+            //client.release(); // Importante liberar aquí
             return;
         }
 
@@ -95,7 +95,7 @@ export const runFantasyCron = async () => {
         if (gamesToProcess.length === 0) {
             console.log("FantasyCron END (no new games to process)");
             await client.query("COMMIT");
-            client.release();
+            //client.release();
             return;
         }
 

@@ -44,10 +44,11 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// 1. Configuración de confianza para Railway
 app.set("trust proxy", 1);
 app.use(express.json());
 
-
+// 2. CORS mejorado (credentials: true para Auth y orden prioritario)
 app.use(cors({
     origin: [
         "http://localhost:4200",
@@ -56,14 +57,31 @@ app.use(cors({
         "https://hoopstats.netlify.app",
         "https://localhost",
     ],
-    credentials: false,
+    credentials: true,
     allowedHeaders: ["Content-Type", "Authorization", "x-cron-key"],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 }));
 
+// 3. Seguridad (Rate Limit, etc.)
 configureSecurity(app);
 
-// CRON LOCAL (07:00 AR)
+// --- SECCIÓN DE DIAGNÓSTICO ---
+// Ruta para verificar a qué base de datos le pega el servidor en producción
+app.get("/api/debug-db", async (_req, res) => {
+    try {
+        const result = await pool.query("SELECT current_database() as db, inet_server_addr() as host");
+        res.json({
+            ok: true,
+            database: result.rows[0].db,
+            server_ip: result.rows[0].host,
+            env: process.env.NODE_ENV || 'production'
+        });
+    } catch (err: any) {
+        res.status(500).json({ ok: false, error: err.message });
+    }
+});
+
+// --- SECCIÓN DE CRONS ---
 cron.schedule(
     "0 7 * * *",
     async () => {
@@ -96,7 +114,7 @@ cron.schedule(
     { timezone: "America/Argentina/Buenos_Aires" }
 );
 
-// RUTAS
+// --- RUTAS ---
 app.use("/api/nba", nbaRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/fantasy", auth, requireEmailVerified, fantasyRoutes);
@@ -113,7 +131,7 @@ app.use("/api/best-players", bestPlayersRoutes);
 app.use("/api/market-lock", marketLockRoutes);
 app.use("/games", gameRoutes);
 
-// Rutas protegidas por cron-key
+// Rutas de CRON (protegidas)
 app.use("/api/cron", requireCronKey, cronRoutes);
 app.use("/api/fantasy-cron", requireCronKey, fantasyCronRoutes);
 app.use("/api/prediction-cron", requireCronKey, predictionCronRoutes);
