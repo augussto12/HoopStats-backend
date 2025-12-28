@@ -185,8 +185,8 @@ export const runFantasyCron = async () => {
                     team.user_id,
                     "FANTASY_POINTS",
                     "Resumen de Jornada",
-                    `¡Tu equipo ${team.name} sumó ${totalDayPts} puntos! (Capitán x2 incluido)`,
-                    { points: totalDayPts, date: yesterdayARG }
+                    `¡Tu equipo ${team.name} sumó ${totalDayPts.toFixed(2)} puntos!`,
+                    { points: Number(totalDayPts.toFixed(2)), date: yesterdayARG }
                 ).catch(err => console.error("Notification Error:", err));
             }
         }
